@@ -3,13 +3,14 @@ from collections import OrderedDict
 from bs4 import BeautifulSoup
 from tqdm import tqdm
 import requests
+import numpy as np
 BASE = "https://chefjackovens.com"
 ARCHIVE = f"{BASE}/recipes/"
 HEADERS = {"User-Agent": "your-scraper/0.1 (+asd@gmail.com)"}
 
 
 def extract_info(links):
-    servings, titles, ingredients, nutrients = [] , [],  [], []
+    servings, titles, ingredients, nutrients, instructions = [] , [],  [], [], []
     for url in tqdm(links):
         r = requests.get(url, headers=HEADERS, timeout=20)
         soup = BeautifulSoup(r.text, "html.parser")
@@ -18,14 +19,29 @@ def extract_info(links):
         titles.append(extract_title(soup))
         ingredients.append(extract_ingredients(soup))
         nutrients.append(extract_nutritional_values(soup))
-    return servings, titles, ingredients, nutrients
+        instructions.append(extract_instructions(soup))
+    return servings, titles, ingredients, nutrients, instructions
 
-def process_info(servings, titles, ingredients, nutrients):
+def extract_instructions(soup):
+        instruction_list = soup.select(".wprm-recipe-instruction-text")
+        instructions = ""
+        try: 
+            for i in range(len(instruction_list) - 1):
+                instruction = instruction_list[i].get_text()
+                instructions += f"{i + 1}. {instruction}, "
+            instructions += f"{len(instruction_list)}. {instruction_list[-1]}"
+        except IndexError:
+            print("invalid index to fill later")
+            instructions = np.nan
+        return instructions
+
+def process_info(servings, titles, ingredients, nutrients, instructions):
     
     data = {
         "titles" : titles,
         "serving" : servings,
         "ingredients" : ingredients,
+        "instructions" : instructions
     }
     total_calories, total_protein, total_fat, total_carbs = [], [], [], []
     for d in nutrients:
@@ -77,7 +93,7 @@ def get_ingredients_from_groups(ingredient_groups):
 
 def extract_nutritional_values(soup):
     nutritional_container = soup.select_one(".wprm-nutrition-label-layout")
-    nutrients = {"protein" : 0, "fat" : 0, "calories" : 0, "carbohydrates" : 0}
+    nutrients = {"protein" : np.nan , "fat" : np.nan, "calories" : np.nan, "carbohydrates" : np.nan}
     return get_nutritional_values(nutritional_container, nutrients)
 
 def get_nutritional_values(container, nutrients):
@@ -100,6 +116,7 @@ def get_nutritional_values(container, nutrients):
 if __name__ == "__main__":
     links = pd.read_csv("processed_links.csv", header=None)[0].tolist()
     data_frame = process_info(*extract_info(links))
+    print("Finished processing links, constructing data set...")
     data_frame.to_csv("processed_info.csv")
 
 
