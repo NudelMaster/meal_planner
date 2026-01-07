@@ -1,0 +1,22 @@
+# Conda environment for meal_planner
+# NOTE: Python explicitly pinned to 3.13 to avoid pydantic/3.14 incompatibility
+name: meal_planner_py313
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.13
+  - pip
+  - pandas
+  - numpy
+  - faiss-cpu  # use faiss-gpu if you have CUDA and prefer GPU
+  - pip:
+    - sentence-transformers
+    - torch
+    - smolagents
+    - python-dotenv
+    - langfuse
+    - git+https://github.com/huggingface/transformers.git  # if you need latest Transformers
+
+# After creating the env, you may want to install extra packages (e.g., intel/BLAS variants) or
+# install PyTorch with the most appropriate channel/variant for your GPU using the PyTorch install page.
