@@ -1,6 +1,6 @@
-# Culinary Agent Backend - Smart Daily Meal Planner
+# Culinary Agent - Smart Daily Meal Planner
 
-Production-ready modular Python backend for an intelligent daily meal planning agent with FastAPI backend and Streamlit frontend.
+Production-ready modular Python system for an intelligent daily meal planning agent with FastAPI backend and Streamlit frontend.
 
 ## Overview
 
@@ -32,8 +32,16 @@ Built with clean architecture principles, proper type hinting, and comprehensive
 ## Project Structure
 
 ```
-culinary_agent_backend/
+culinary_agent/
 ├── api.py                         # FastAPI REST API server
+├── frontend/
+│   └── app.py                     # Streamlit web interface
+├── data/
+│   └── recipes/                   # Recipe data files
+│       ├── recipes_for_embeddings.jsonl
+│       └── full_format_recipes.json
+├── indices/
+│   └── recipe_index.faiss         # FAISS vector index
 ├── src/
 │   ├── __init__.py
 │   ├── main.py                    # CLI entry point
@@ -71,7 +79,7 @@ culinary_agent_backend/
 └── REFACTORING_PLAN.md           # Project improvement roadmap
 ```
 
-**Note**: For deployment setup, see [REFACTORING_PLAN.md](REFACTORING_PLAN.md) which includes Docker, frontend integration, and production configuration.
+**Note**: The project now follows a clean architecture with organized data, frontend, and backend components. For Docker deployment and advanced features, see [REFACTORING_PLAN.md](REFACTORING_PLAN.md).
 
 ## Installation
 
@@ -86,7 +94,7 @@ culinary_agent_backend/
 
 1. **Clone or navigate to the project directory:**
    ```bash
-   cd /path/to/meal_planner/culinary_agent_backend
+   cd /path/to/meal_planner/culinary_agent
    ```
 
 2. **Install dependencies:**
@@ -107,7 +115,7 @@ culinary_agent_backend/
 
    *If missing, run the index builder (see below).*
    
-   **Note**: For better organization, consider moving these to `culinary_agent_backend/data/` and `culinary_agent_backend/indices/` respectively (see [REFACTORING_PLAN.md](REFACTORING_PLAN.md)).
+   **Note**: Data files are now organized in `data/recipes/` and `indices/` directories within the project.
 
 ## Usage
 
@@ -121,10 +129,10 @@ culinary_agent_backend/
 
 ### 1. CLI Mode
 
-From the `culinary_agent_backend/src` directory:
+From the `culinary_agent/src` directory:
 
 ```bash
-cd /path/to/meal_planner/culinary_agent_backend/src
+cd /path/to/meal_planner/culinary_agent/src
 python main.py
 ```
 
@@ -132,7 +140,7 @@ Or as a module from the project root:
 
 ```bash
 cd /path/to/meal_planner
-python -m culinary_agent_backend.src.main
+python -m culinary_agent.src.main
 ```
 
 **Example Session:**
@@ -199,7 +207,7 @@ Enter dietary preferences (e.g., 'vegan', 'high protein'): gluten-free
 Start the REST API server:
 
 ```bash
-cd /path/to/meal_planner/culinary_agent_backend
+cd /path/to/meal_planner/culinary_agent
 uvicorn api:app --reload
 ```
 
@@ -295,8 +303,8 @@ else:
 Start the Streamlit web interface:
 
 ```bash
-cd /path/to/meal_planner
-streamlit run front_end.py
+cd /path/to/meal_planner/culinary_agent
+streamlit run frontend/app.py
 ```
 
 **Access the Interface:**
@@ -335,10 +343,9 @@ streamlit run front_end.py
 ### Building the FAISS Index
 
 If `recipe_index.faiss` doesn't exist:
-meal plan management with selective meal updates
-- Menu-driven interface for intuitive meal planning
 ```bash
-python -m culinary_agent_backend.src.indexing.build_index
+cd /path/to/meal_planner/culinary_agent
+python -m src.indexing.build_index
 ```
 
 This will:
@@ -398,7 +405,7 @@ The `@robust_llm_call` decorator ([src/utils/decorators.py](src/utils/decorators
 ### Running Tests
 
 ```bash
-cd /path/to/meal_planner/culinary_agent_backend
+cd /path/to/meal_planner/culinary_agent
 pytest tests/
 ```
 
@@ -412,12 +419,11 @@ pytest tests/ -v
 **Option 1: Manual Startup**
 ```bash
 # Terminal 1: Start backend
-cd culinary_agent_backend
+cd culinary_agent
 uvicorn api:app --reload
 
-# Terminal 2: Start frontend
-cd meal_planner
-streamlit run front_end.py
+# Terminal 2: Start frontend (in same directory)
+streamlit run frontend/app.py
 
 # Terminal 3: Test API
 curl http://127.0.0.1:8000/health
@@ -426,15 +432,14 @@ curl http://127.0.0.1:8000/health
 **Option 2: Using Background Processes**
 ```bash
 # Start backend in background
-cd culinary_agent_backend
+cd culinary_agent
 uvicorn api:app --reload &
 
 # Wait for startup
 sleep 5
 
-# Start frontend
-cd ..
-streamlit run front_end.py
+# Start frontend in same directory
+streamlit run frontend/app.py
 ```
 
 ### Development Workflow
@@ -536,7 +541,7 @@ def _initialize_tools(self):
 ```bash
 # 1. Clone repository
 git clone <repository-url>
-cd meal_planner/culinary_agent_backend
+cd meal_planner/culinary_agent
 
 # 2. Install dependencies
 pip install -r requirements.txt
@@ -545,12 +550,11 @@ pip install -r requirements.txt
 cp .env.example .env
 # Edit .env with your API keys
 
-# 4. Prepare data (copy to project)
-# Place data files in project root or data/ directory
+# 4. Data files should already be in data/ and indices/ directories
 
 # 5. Start services
 uvicorn api:app --host 0.0.0.0 --port 8000 &
-streamlit run ../front_end.py --server.port 8501
+streamlit run frontend/app.py --server.port 8501
 ```
 
 ### Docker Deployment (Coming Soon)
