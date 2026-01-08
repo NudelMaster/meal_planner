@@ -1,30 +1,37 @@
 # Core dependencies
-smolagents>=1.0.0
-sentence-transformers>=2.2.0
+numpy>=1.24.0
+pandas>=2.0.0
 faiss-cpu>=1.7.4
-torch>=2.0.0
-transformers>=4.30.0
 
-# API and Web Framework
+# Machine Learning
+torch>=2.0.0
+sentence-transformers>=2.2.0
+smolagents>=0.1.0
+
+# LLM & AI
+transformers>=4.30.0
+huggingface-hub>=0.16.0
+
+# Web search
+duckduckgo-search>=3.8.0
+
+# Environment & Configuration
+python-dotenv>=1.0.0
+
+# Monitoring & Logging
+langfuse>=2.0.0
+
+# API Framework
 fastapi>=0.100.0
 uvicorn[standard]>=0.23.0
+pydantic>=2.0.0
+
+# Frontend
 streamlit>=1.25.0
 requests>=2.31.0
 
-# Data processing
-pandas>=2.0.0
-numpy>=1.24.0
-
-# Search and utilities
-duckduckgo-search>=3.8.0
-python-dotenv>=1.0.0
-
-# Monitoring and logging
-langfuse>=2.0.0
-
-# Testing (optional)
+# Development & Testing
 pytest>=7.4.0
-pytest-asyncio>=0.21.0
-
-# Note: For GPU support, replace faiss-cpu with faiss-gpu
-# For production, consider pinning exact versions for reproducibility
+black>=23.0.0
+flake8>=6.0.0
+mypy>=1.4.0
