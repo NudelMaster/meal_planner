@@ -1,24 +1,27 @@
-# Culinary Agent Backend
+# Culinary Agent Backend - Smart Daily Meal Planner
 
-Production-ready modular Python backend for an intelligent recipe discovery and adaptation agent, refactored from experimental Jupyter notebooks.
+Production-ready modular Python backend for an intelligent daily meal planning agent, refactored from experimental Jupyter notebooks.
 
 ## Overview
 
-The Culinary Agent Backend is a sophisticated system that combines:
+The Culinary Agent Backend is a sophisticated meal planning system that combines:
 - **Vector Search (FAISS)** for semantic recipe retrieval
 - **LLM-powered adaptation** to rewrite recipes for dietary constraints
 - **Strict validation** to ensure compliance with dietary requirements
 - **Web search fallback** via DuckDuckGo for missing recipes
+- **Smart meal planning** with targeted updates for breakfast, lunch, and dinner
 
 Built with clean architecture principles, proper type hinting, and comprehensive error handling.
 
 ## Features
 
+✅ **Daily Meal Planning**: Generate complete meal plans (Breakfast, Lunch, Dinner)  
+✅ **Selective Meal Updates**: Modify individual meals while preserving others  
 ✅ **Semantic Recipe Search**: FAISS-indexed vector search using BAAI/bge-m3 embeddings  
 ✅ **Dietary Adaptation**: LLM-powered recipe modification (vegan, gluten-free, keto, etc.)  
 ✅ **Compliance Validation**: Deterministic PASS/FAIL checks for ingredient safety  
 ✅ **Fallback Search**: DuckDuckGo web search when local DB has no matches  
-✅ **Stateful Sessions**: Conversation memory for iterative recipe refinement  
+✅ **Stateful Sessions**: Persistent meal plan memory across sessions  
 ✅ **Robust Error Handling**: Automatic retry with exponential backoff for transient failures  
 
 ## Project Structure
@@ -97,33 +100,82 @@ culinary_agent_backend/
 
 ### Running the CLI
 
+From the `culinary_agent_backend/src` directory:
+
+```bash
+cd /path/to/meal_planner/culinary_agent_backend/src
+python main.py
+```
+
+Or as a module from the project root:
+
 ```bash
 cd /path/to/meal_planner
 python -m culinary_agent_backend.src.main
 ```
 
 **Example Session:**
+
 ```
-🍳 CULINARY AGENT - Recipe Discovery & Adaptation
+============================================================
+ 🍳 CULINARY AGENT - Smart Daily Meal Planner
 ============================================================
 
-🔍 Enter your food request (or 'clear' to start fresh): I need a vegan lasagna recipe
+Initializing agent...
+✓ Culinary Agent ready!
 
-🤔 Agent is thinking...
+------------------------------------------------------------
+ 📋 PLANNING MODE SELECTION:
+ 1. Generate Full Day Plan (Breakfast, Lunch, Dinner)
+ 2. Modify/Generate ONLY Breakfast
+ 3. Modify/Generate ONLY Lunch
+ 4. Modify/Generate ONLY Dinner
+ c. Clear Session (Start Fresh)
+ q. Quit
+------------------------------------------------------------
+Select an option (1-4, c, q): 1
+
+Enter dietary preferences (e.g., 'vegan', 'high protein'): vegan high protein
+
+============================================================
+🤔 Agent is thinking... [Task: Create a full daily meal plan. Constraint: vegan high protein]
 ============================================================
 
 🍽️  AGENT RESPONSE:
 ============================================================
 
-[Recipe appears here...]
+[Complete meal plan with Breakfast, Lunch, and Dinner appears here...]
 
-💬 Feedback (or type 'exit'/'clear'): Make it gluten-free too
+------------------------------------------------------------
+ 📋 PLANNING MODE SELECTION:
+ 1. Generate Full Day Plan (Breakfast, Lunch, Dinner)
+ 2. Modify/Generate ONLY Breakfast
+ 3. Modify/Generate ONLY Lunch
+ 4. Modify/Generate ONLY Dinner
+ c. Clear Session (Start Fresh)
+ q. Quit
+------------------------------------------------------------
+Select an option (1-4, c, q): 3
+
+Enter dietary preferences (e.g., 'vegan', 'high protein'): gluten-free
+
+[Only lunch gets updated, breakfast and dinner remain unchanged...]
 ```
+
+### Menu Options
+
+1. **Generate Full Day Plan** - Creates a complete meal plan with breakfast, lunch, and dinner
+2. **Modify ONLY Breakfast** - Updates breakfast while keeping lunch and dinner from previous plan
+3. **Modify ONLY Lunch** - Updates lunch while keeping breakfast and dinner from previous plan
+4. **Modify ONLY Dinner** - Updates dinner while keeping breakfast and lunch from previous plan
+5. **Clear Session** - Removes saved state and starts fresh
+6. **Quit** - Exits the application (saves current state)
 
 ### Building the FAISS Index
 
 If `recipe_index.faiss` doesn't exist:
-
+meal plan management with selective meal updates
+- Menu-driven interface for intuitive meal planning
 ```bash
 python -m culinary_agent_backend.src.indexing.build_index
 ```
