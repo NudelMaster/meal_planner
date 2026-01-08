@@ -1,0 +1,9 @@
+smolagents
+faiss-cpu
+sentence-transformers
+duckduckgo-search
+numpy
+python-dotenv
+langfuse
+huggingface-hub
+ddgs
