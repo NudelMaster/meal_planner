@@ -11,7 +11,7 @@ from utils.state_manager import StateManager
 def run_cli():
     """Run the CLI interface for the culinary agent."""
     print("="*60)
-    print(" 🍳 CULINARY AGENT - Recipe Discovery & Adaptation")
+    print(" 🍳 CULINARY AGENT - Smart Daily Meal Planner")
     print("="*60)
     
     # Initialize state manager
@@ -20,7 +20,8 @@ def run_cli():
     # Initialize agent
     print("\nInitializing agent...")
     try:
-        agent = create_agent(top_k_recipes=1, max_steps=12)
+        # Increased max_steps to allow for 3-meal iterations
+        agent = create_agent(top_k_recipes=1, max_steps=15)
     except Exception as e:
         print(f"\n❌ Failed to initialize agent: {e}")
         print("\nPlease ensure:")
@@ -32,51 +33,90 @@ def run_cli():
     # Check for previous session
     current_recipe_context = None
     if state_manager.has_state():
-        print("\n📂 Found previous session! Loading last recipe...")
+        print("\n📂 Found previous session! Loading last plan...")
         current_recipe_context = state_manager.load_state()
         if current_recipe_context:
-            print(f"RESUMED CONTEXT: {current_recipe_context[:100]}...")
-    
-    # Get initial user request
-    user_request = input("\n🔍 Enter your food request (or 'clear' to start fresh): ").strip()
-    
-    if user_request.lower() == 'clear':
-        current_recipe_context = None
-        state_manager.clear_state()
-        print("✓ Session cleared")
-        user_request = input("Enter new food request: ").strip()
+            print(f"RESUMED CONTEXT (First 100 chars): {current_recipe_context[:100]}...")
     
     # Main interaction loop
     while True:
-        if not user_request:
-            print("⚠️  Please enter a valid request")
-            user_request = input("\n🔍 Enter your food request: ").strip()
-            continue
+        print("\n" + "-"*60)
+        print(" 📋 PLANNING MODE SELECTION:")
+        print(" 1. Generate Full Day Plan (Breakfast, Lunch, Dinner)")
+        print(" 2. Modify/Generate ONLY Breakfast")
+        print(" 3. Modify/Generate ONLY Lunch")
+        print(" 4. Modify/Generate ONLY Dinner")
+        print(" c. Clear Session (Start Fresh)")
+        print(" q. Quit")
+        print("-"*60)
+
+        choice = input("Select an option (1-4, c, q): ").strip().lower()
+
+        # Handle Exits and Clears
+        if choice in ['q', 'quit', 'exit']:
+            print("\n👋 Goodbye! Your session has been saved.")
+            break
         
-        # Construct prompt
+        elif choice == 'c':
+            current_recipe_context = None
+            state_manager.clear_state()
+            print("✓ Session cleared. Starting fresh.")
+            continue
+
+        # Get Dietary Constraints
+        if choice in ['1', '2', '3', '4']:
+            diet_request = input("Enter dietary preferences (e.g., 'vegan', 'high protein'): ").strip()
+            if not diet_request:
+                diet_request = "balanced diet" # Default fallback
+        else:
+            print("⚠️  Invalid choice, please try again.")
+            continue
+
+        # Construct the User Request based on Menu Choice
+        # This string triggers the "Smart Targeting" logic in your System Prompt
+        if choice == '1':
+            user_request = f"Create a full daily meal plan. Constraint: {diet_request}"
+        elif choice == '2':
+            user_request = f"Update ONLY the Breakfast. Constraint: {diet_request}"
+        elif choice == '3':
+            user_request = f"Update ONLY the Lunch. Constraint: {diet_request}"
+        elif choice == '4':
+            user_request = f"Update ONLY the Dinner. Constraint: {diet_request}"
+
+        # Construct the Final Prompt for the Agent
+        # If we have context, we attach it so the agent knows what to "Update"
         if not current_recipe_context:
             full_prompt = f"{SYSTEM_PROMPT}\n\nUSER REQUEST: {user_request}"
         else:
             full_prompt = f"""
-{SYSTEM_PROMPT}
+                            {SYSTEM_PROMPT}
 
-CONTEXT: Previous recipe provided.
-PREVIOUS RECIPE: {current_recipe_context}
-USER FEEDBACK: {user_request}
-TASK: Adapt PREVIOUS RECIPE to USER FEEDBACK. Validate it.
-"""
+                            CONTEXT: The user has an existing plan.
+                            PREVIOUS PLAN:
+                            {current_recipe_context}
+
+                            USER REQUEST: {user_request}
+
+                            TASK: 
+                            1. If the user asked for a FULL PLAN, ignore the previous plan and generate new.
+                            2. If the user asked to UPDATE a specific meal, keep the other meals from PREVIOUS PLAN and only rewrite the requested one.
+                            """
         
         print("\n" + "="*60)
-        print("🤔 Agent is thinking...")
+        print(f"🤔 Agent is thinking... [Task: {user_request}]")
         print("="*60 + "\n")
         
         try:
             # Run the agent
-            response = agent.run_with_retry(full_prompt)
+            # Note: Ensure agent.run_with_retry() exists in your core.py, or use agent.run()
+            if hasattr(agent, 'run_with_retry'):
+                response = agent.run_with_retry(full_prompt)
+            else:
+                response = agent.run(full_prompt)
             
             # Save state immediately
-            current_recipe_context = response
-            state_manager.save_state(str(response))
+            current_recipe_context = str(response)
+            state_manager.save_state(current_recipe_context)
             
             # Display response
             print("\n" + "="*60)
@@ -89,19 +129,6 @@ TASK: Adapt PREVIOUS RECIPE to USER FEEDBACK. Validate it.
             print("\n💾 The agent state has been preserved.")
             print("You can restart and your previous context will be loaded.")
             break
-        
-        # Get feedback
-        print("-"*60)
-        user_request = input("\n💬 Feedback (or type 'exit'/'clear'): ").strip()
-        
-        if user_request.lower() in ['exit', 'quit', 'q']:
-            print("\n👋 Goodbye! Your session has been saved.")
-            break
-        elif user_request.lower() == 'clear':
-            current_recipe_context = None
-            state_manager.clear_state()
-            print("✓ Session cleared")
-            user_request = input("\n🔍 Enter new food request: ").strip()
 
 
 def main():
