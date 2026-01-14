@@ -3,7 +3,7 @@
 import os
 from pathlib import Path
 
-# Base directories
+# Base directories - updated for new structure
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 PROJECT_ROOT = BASE_DIR
 DATA_DIR = PROJECT_ROOT / "data" / "recipes"
@@ -15,7 +15,8 @@ FULL_RECIPES_FILE = DATA_DIR / "full_format_recipes.json"
 FAISS_INDEX_FILE = INDICES_DIR / "recipe_index.faiss"
 
 # Model configuration
-MODEL_ID = "Qwen/Qwen2.5-14B-Instruct"
+# Available models: Qwen/Qwen2.5-7B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct, mistralai/Mistral-7B-Instruct-v0.3
+MODEL_ID = os.getenv('MODEL_ID', "Qwen/Qwen2.5-7B-Instruct")
 EMBEDDING_MODEL_NAME = "BAAI/bge-m3"
 
 # Environment variables

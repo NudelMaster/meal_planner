@@ -1,3 +1,6 @@
-# Contents of the file: culinary_agent_backend/culinary_agent_backend/src/__init__.py
+"""Culinary Agent - Smart Daily Meal Planner
 
-# This file is intentionally left blank.
+Source code package containing all modules for the intelligent meal planning system.
+"""
+
+__version__ = "1.0.0"

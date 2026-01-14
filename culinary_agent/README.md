@@ -1,10 +1,14 @@
 # Culinary Agent - Smart Daily Meal Planner
 
-Production-ready modular Python system for an intelligent daily meal planning agent with FastAPI backend and Streamlit frontend.
+> Production-ready generative AI system for intelligent meal planning with agentic RAG, FastAPI backend, and Streamlit frontend.
+
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-green.svg)](https://fastapi.tiangolo.com/)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Overview
 
-The Culinary Agent Backend is a sophisticated meal planning system that combines:
+The Culinary Agent is a sophisticated meal planning system that combines:
 - **Vector Search (FAISS)** for semantic recipe retrieval
 - **LLM-powered adaptation** to rewrite recipes for dietary constraints
 - **Strict validation** to ensure compliance with dietary requirements
@@ -129,18 +133,31 @@ culinary_agent/
 
 ### 1. CLI Mode
 
-From the `culinary_agent/src` directory:
+**Quick Start:**
+```bash
+cd /path/to/meal_planner/culinary_agent
+./scripts/run_cli.sh
+```
 
+**Alternative Methods:**
+
+**Option A** - Using the wrapper script (deprecated but works):
 ```bash
 cd /path/to/meal_planner/culinary_agent/src
 python main.py
 ```
+*Note: This shows a deprecation warning but still redirects to the new CLI*
 
-Or as a module from the project root:
-
+**Option B** - Direct module execution (recommended):
 ```bash
-cd /path/to/meal_planner
-python -m culinary_agent.src.main
+cd /path/to/meal_planner/culinary_agent
+python -m src.inference.cli
+```
+
+**Option C** - From Python REPL:
+```python
+from src.inference.cli import main
+main()
 ```
 
 **Example Session:**
@@ -208,12 +225,12 @@ Start the REST API server:
 
 ```bash
 cd /path/to/meal_planner/culinary_agent
-uvicorn api:app --reload
+uvicorn src.api.server:app --reload
 ```
 
 Or run directly:
 ```bash
-python api.py
+python -m src.api.server
 ```
 
 **Access the API:**
@@ -232,34 +249,98 @@ python api.py
 
 **Example API Usage:**
 
+**1. Health Check** - Verify the API is running and agent is ready:
 ```bash
-# Health check
 curl http://127.0.0.1:8000/health
+```
 
-# Generate full day plan
+Expected response:
+```json
+{
+  "status": "healthy",
+  "model": "Qwen/Qwen2.5-7B-Instruct",
+  "version": "1.0.0"
+}
+```
+
+**2. Generate Full Day Plan** - Create a complete meal plan from scratch:
+```bash
 curl -X POST http://127.0.0.1:8000/generate-plan \
   -H "Content-Type: application/json" \
   -d '{
     "diet_constraints": "vegan, high protein",
     "mode": "Full Day"
   }'
+```
 
-# Update only breakfast (requires previous_plan)
+Expected response:
+```json
+{
+  "status": "success",
+  "result": "==================== BREAKFAST ====================\nTofu Scramble with Spinach\n...\n==================== LUNCH ====================\nQuinoa Buddha Bowl\n...\n==================== DINNER ====================\nLentil Curry with Brown Rice\n...",
+  "mode": "Full Day",
+  "diet_constraints": "vegan, high protein"
+}
+```
+
+**3. Update Only Breakfast** - Modify just breakfast while preserving lunch and dinner:
+```bash
+# First, save your current plan to a variable or file
+CURRENT_PLAN=$(cat << 'EOF'
+==================== BREAKFAST ====================
+Tofu Scramble with Spinach
+...
+==================== LUNCH ====================
+Quinoa Buddha Bowl
+...
+==================== DINNER ====================
+Lentil Curry with Brown Rice
+...
+EOF
+)
+
+# Then update only breakfast
+curl -X POST http://127.0.0.1:8000/generate-plan \
+  -H "Content-Type: application/json" \
+  -d "{
+    \"diet_constraints\": \"gluten-free, high protein\",
+    \"mode\": \"Breakfast\",
+    \"previous_plan\": \"$CURRENT_PLAN\"
+  }"
+```
+
+**4. Update Specific Meals** - Examples for lunch and dinner:
+```bash
+# Update only lunch
 curl -X POST http://127.0.0.1:8000/generate-plan \
   -H "Content-Type: application/json" \
   -d '{
-    "diet_constraints": "gluten-free",
-    "mode": "Breakfast",
-    "previous_plan": "BREAKFAST:\n..."
+    "diet_constraints": "keto, dairy-free",
+    "mode": "Lunch",
+    "previous_plan": "..."
+  }'
+
+# Update only dinner
+curl -X POST http://127.0.0.1:8000/generate-plan \
+  -H "Content-Type: application/json" \
+  -d '{
+    "diet_constraints": "paleo, nut-free",
+    "mode": "Dinner",
+    "previous_plan": "..."
   }'
 ```
 
-**Python Client Example:**
+**Python Client Examples:**
 
+**Basic Usage:**
 ```python
 import requests
 
-# Generate meal plan
+# 1. Check API health
+health = requests.get("http://127.0.0.1:8000/health")
+print(f"API Status: {health.json()['status']}")
+
+# 2. Generate full day meal plan
 response = requests.post(
     "http://127.0.0.1:8000/generate-plan",
     json={
@@ -272,9 +353,240 @@ if response.status_code == 200:
     data = response.json()
     print(f"Status: {data['status']}")
     print(f"Mode: {data['mode']}")
-    print(f"Plan:\n{data['result']}")
+    print(f"Constraints: {data['diet_constraints']}")
+    print(f"\nMeal Plan:\n{data['result']}")
 else:
     print(f"Error: {response.json()['detail']}")
+```
+
+**Advanced Usage - Iterative Meal Planning:**
+```python
+import requests
+
+class MealPlannerClient:
+    """Client for interacting with the Culinary Agent API."""
+    
+    def __init__(self, base_url="http://127.0.0.1:8000"):
+        self.base_url = base_url
+        self.current_plan = None
+    
+    def generate_full_plan(self, diet_constraints):
+        """Generate a complete meal plan."""
+        response = requests.post(
+            f"{self.base_url}/generate-plan",
+            json={
+                "diet_constraints": diet_constraints,
+                "mode": "Full Day"
+            }
+        )
+        if response.status_code == 200:
+            dasrc/frontend/app.py
+```
+
+**Access the Interface:**
+- Open http://localhost:8501 in your browser
+
+**Features:**
+- 🎮 **Interactive Controls**: Easy-to-use sidebar for diet preferences
+- 📋 **Mode Selection**: Choose full day or specific meal updates
+- 💾 **Session Memory**: Automatically preserves your current plan
+- ✏️ **Manual Editing**: Override or paste previous plans
+- 🚀 **One-Click Generation**: Execute agent with a single button
+
+**Prerequisites:**
+- FastAPI backend must be running at http://127.0.0.1:8000
+- Install frontend dependencies: `pip install streamlit requests`
+
+**Detailed Workflow:**
+
+**First Time Setup:**
+1. **Start the backend** (in Terminal 1):
+   ```bash
+   cd /path/to/meal_planner/culinary_agent
+   uvicorn src.api.server:app --reload
+   ```
+   Wait for: `✅ Agent is ready to cook!`
+
+2. **Start the frontend** (in Terminal 2):
+   ```bash
+   streamlit run src/frontend/app.py
+   ```
+   Browser should auto-open to http://localhost:8501
+
+**Using the Interface:**
+
+**Scenario 1: Generate Your First Meal Plan**
+1. In the sidebar, enter dietary constraints:
+   ```
+   vegan, high protein, gluten-free
+   ```
+2. Ensure "Full Day Plan" is selected
+3. Click "🚀 Execute Agent"
+4. Wait 10-30 seconds for the agent to generate your plan
+5. View the complete plan with Breakfast, Lunch, and Dinner
+
+**Scenario 2: Update a Specific Meal**
+1. After generating a plan, new options appear:
+   - "Full Day Plan (Overwrite)"
+   - "Update Breakfast Only"
+   - "Update Lunch Only"
+   - "Update Dinner Only"
+2. Select "Update Breakfast Only"
+3. Change constraints to (e.g.):
+   ```
+   vegan, high protein, quick recipes
+   ```
+4. Click "🚀 Execute Agent"
+5. Only breakfast updates; lunch and dinner remain unchanged
+
+**Scenario 3: Iterative Refinement**
+1. Start with: `vegetarian, budget-friendly`
+2. Review the plan
+3. Update breakfast: `vegetarian, budget-friendly, quick prep`
+4. Review breakfast
+5. Update lunch: `vegetarian, budget-friendly, meal prep friendly`
+6. Review lunch
+7. Keep refining until satisfied
+
+**Scenario 4: Manual Override**
+1. Generate any meal plan
+2. Expand "📝 Manually Edit / Paste Old Plan"
+3. Edit the text directly (e.g., add your own recipe)
+4. Click "Save Manual Edits"
+5. Continue using the agent with your custom plan
+
+**Tips for Best Results:**
+- Be specific with constraints: `"low-carb, dairy-free, under 30 minutes"`
+- Use commas to separate multiple requirements
+- Start with a full day plan before making updates
+- The agent remembers your plan within the session
+- Use manual edit to save custom recipes between updates
+            raise Exception(f"API Error: {response.json()}")
+
+# Example workflow
+client = MealPlannerClient()
+
+# Step 1: Generate initial plan
+print("Generating initial meal plan...")
+plan1 = client.generate_full_plan("vegan, high protein")
+print(f"✓ Generated full day plan\n")
+
+# Step 2: Update breakfast to be gluten-free
+print("Updating breakfast to gluten-free...")
+plan2 = client.update_meal("Breakfast", "vegan, high protein, gluten-free")
+print(f"✓ Updated breakfast (lunch and dinner preserved)\n")
+
+# Step 3: Make dinner low-carb
+print("Making dinner low-carb...")
+plan3 = client.update_meal("Dinner", "vegan, high protein, low-carb")
+print(f"✓ Updated dinner (breakfast and lunch preserved)\n")
+
+# Display final plan
+print("="*60)
+print("FINAL MEAL PLAN")
+print("="*60)
+print(client.current_plan)
+```
+
+**Handling Errors and Retries:**
+```python
+import requests
+import time
+from typing import Optional
+
+def generate_plan_with_retry(
+    diet_constraints: str,
+    mode: str = "Full Day",
+    previous_plan: Optional[str] = None,
+    max_retries: int = 3
+):
+    """Generate meal plan with automatic retry on failure."""
+    
+    url = "http://127.0.0.1:8000/generate-plan"
+    payload = {
+        "diet_constraints": diet_constraints,
+        "mode": mode
+    }
+    if previous_plan:
+        payload["previous_plan"] = previous_plan
+    
+    for attempt in range(max_retries):
+        try:
+            response = requests.post(url, json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                return response.json()
+            elif response.status_code == 503:
+                # Agent not ready, wait and retry
+                print(f"Agent initializing... (attempt {attempt + 1}/{max_retries})")
+                time.sleep(10)
+            else:
+                # Other error, raise immediately
+                response.raise_for_status()
+        
+        except requests.exceptions.Timeout:
+            print(f"Request timed out (attempt {attempt + 1}/{max_retries})")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+        
+        except requests.exceptions.RequestException as e:
+            print(f"Request failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(5)
+    
+    raise Exception("Max retries exceeded")
+
+# Usage
+result = generate_plan_with_retry(
+    diet_constraints="mediterranean, heart-healthy",
+    mode="Full Day"
+)
+print(result['result'])
+```
+
+**Batch Processing Multiple Dietary Preferences:**
+```python
+import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+def generate_plan_for_diet(diet_constraints):
+    """Generate a meal plan for specific dietary constraints."""
+    response = requests.post(
+        "http://127.0.0.1:8000/generate-plan",
+        json={
+            "diet_constraints": diet_constraints,
+            "mode": "Full Day"
+        }
+    )
+    if response.status_code == 200:
+        return diet_constraints, response.json()['result']
+    else:
+        return diet_constraints, f"Error: {response.status_code}"
+
+# Generate plans for multiple diets concurrently
+diets = [
+    "vegan, high protein",
+    "keto, dairy-free",
+    "paleo, nut-free",
+    "mediterranean, low-sodium",
+    "gluten-free, vegetarian"
+]
+
+plans = {}
+with ThreadPoolExecutor(max_workers=3) as executor:
+    futures = {executor.submit(generate_plan_for_diet, diet): diet 
+               for diet in diets}
+    
+    for future in as_completed(futures):
+        diet_constraints, plan = future.result()
+        plans[diet_constraints] = plan
+        print(f"✓ Generated plan for: {diet_constraints}")
+
+# Save all plans
+import json
+with open("meal_plans.json", "w") as f:
+    json.dump(plans, f, indent=2)
+```
 ```
 
 **Request Schema:**
@@ -322,8 +634,8 @@ streamlit run frontend/app.py
 - Install frontend dependencies: `pip install streamlit requests`
 
 **Typical Workflow:**
-1. Start backend: `uvicorn api:app --reload`
-2. Start frontend: `streamlit run front_end.py`
+1. Start backend: `uvicorn src.api.server:app --reload`
+2. Start frontend: `streamlit run src/frontend/app.py`
 3. Enter dietary constraints (e.g., "vegan, high protein")
 4. Click "Execute Agent"
 5. View generated plan
@@ -420,10 +732,10 @@ pytest tests/ -v
 ```bash
 # Terminal 1: Start backend
 cd culinary_agent
-uvicorn api:app --reload
+uvicorn src.api.server:app --reload
 
 # Terminal 2: Start frontend (in same directory)
-streamlit run frontend/app.py
+streamlit run src/frontend/app.py
 
 # Terminal 3: Test API
 curl http://127.0.0.1:8000/health
@@ -433,13 +745,13 @@ curl http://127.0.0.1:8000/health
 ```bash
 # Start backend in background
 cd culinary_agent
-uvicorn api:app --reload &
+uvicorn src.api.server:app --reload &
 
 # Wait for startup
 sleep 5
 
 # Start frontend in same directory
-streamlit run frontend/app.py
+streamlit run src/frontend/app.py
 ```
 
 ### Development Workflow
@@ -553,8 +865,8 @@ cp .env.example .env
 # 4. Data files should already be in data/ and indices/ directories
 
 # 5. Start services
-uvicorn api:app --host 0.0.0.0 --port 8000 &
-streamlit run frontend/app.py --server.port 8501
+uvicorn src.api.server:app --host 0.0.0.0 --port 8000 &
+streamlit run src/frontend/app.py --server.port 8501
 ```
 
 ### Docker Deployment (Coming Soon)

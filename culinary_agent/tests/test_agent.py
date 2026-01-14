@@ -7,15 +7,15 @@ from pathlib import Path
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
-from agent.core import create_agent, CulinaryAgent
-from agent.prompts import SYSTEM_PROMPT
-from tools.retriever import RecipeRetrieverTool
-from tools.adapter import RecipeAdapterTool
-from tools.validator import RecipeValidatorTool
-from tools.web_search import WebSearchTool
-from utils.decorators import robust_llm_call
-from utils.state_manager import StateManager
-from config.settings import (
+from src.core.agent import create_agent, CulinaryAgent
+from src.prompts.templates import SYSTEM_PROMPT
+from src.rag.retrieval import RecipeRetrieverTool
+from src.inference.adapter import RecipeAdapterTool
+from src.inference.validator import RecipeValidatorTool
+from src.inference.fallback import WebSearchTool
+from src.utils.decorators import robust_llm_call
+from src.utils.state_manager import StateManager
+from src.config.settings import (
     MODEL_ID,
     RECIPE_EMBEDDINGS_FILE,
     FULL_RECIPES_FILE,

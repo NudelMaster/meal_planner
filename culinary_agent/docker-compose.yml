@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # API Service
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: culinary_agent_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./config:/app/config
+      - ./data:/app/data
+      - ./indices:/app/indices
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    command: uvicorn src.api.server:app --host 0.0.0.0 --port 8000 --reload
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:8000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    networks:
+      - culinary_network
+
+  # Frontend Service
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: culinary_agent_frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./src:/app/src
+      - ./.env:/app/.env
+    environment:
+      - PYTHONUNBUFFERED=1
+    env_file:
+      - .env
+    command: streamlit run src/frontend/app.py --server.port 8501 --server.address 0.0.0.0
+    depends_on:
+      - api
+    networks:
+      - culinary_network
+
+networks:
+  culinary_network:
+    driver: bridge
+
+volumes:
+  data_volume:
+  indices_volume:

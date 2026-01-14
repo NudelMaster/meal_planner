@@ -1,6 +1,9 @@
-from culinary_agent_backend.src.tools.retriever import RecipeRetrieverTool
-from culinary_agent_backend.src.tools.adapter import RecipeAdapterTool, RecipeValidatorTool
-from culinary_agent_backend.src.tools.web_search import WebSearchTool
+"""Tests for the culinary agent tools."""
+
+from src.rag.retrieval import RecipeRetrieverTool
+from src.inference.adapter import RecipeAdapterTool
+from src.inference.validator import RecipeValidatorTool
+from src.inference.fallback import WebSearchTool
 
 def test_recipe_retriever():
     retriever = RecipeRetrieverTool(k=3)

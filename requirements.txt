@@ -1,0 +1,13 @@
+# Requirements inferred from imports in:
+# - agentic_rag.ipynb
+# - build_index.ipynb
+# - data_processing.ipynb
+
+pandas
+numpy
+sentence-transformers
+torch
+faiss-cpu  # For CPU installs. If you need GPU support, install faiss-gpu via conda.
+smolagents
+python-dotenv
+langfuse
