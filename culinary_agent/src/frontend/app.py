@@ -2,38 +2,41 @@ import os
 import sys
 import streamlit as st
 
-# --- 1. PATH SETUP (Based on your Screenshot) ---
+# --- 1. PATH SETUP ---
 # Current file: .../culinary_agent/src/frontend/app.py
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
+# 1. Define Project Root (culinary_agent)
 # Go up 2 levels: frontend -> src -> culinary_agent
-project_root = os.path.abspath(os.path.join(current_dir, "../../"))
+project_root = os.path.abspath(os.path.join(current_dir, "../.."))
 
-# Add to Python Path
+# 2. Define Source Root (culinary_agent/src)
+src_root = os.path.join(project_root, "src")
+
+# 3. Add BOTH to Python Path
+# This fixes "No module named 'src'"
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# --- 2. DEBUGGING (Delete this section after it works) ---
-# This will prove if we found the right folder
-try:
-    files_in_root = os.listdir(project_root)
-    if "src" not in files_in_root:
-        st.error(f"⚠️ ROOT ERROR: Expected to find 'src' folder in {project_root} but found: {files_in_root}")
-        st.stop()
-except Exception as e:
-    st.error(f"Path Error: {e}")
-# ---------------------------------------------------------
+# This fixes "No module named 'tools'" (or 'agent', 'utils')
+if src_root not in sys.path:
+    sys.path.insert(0, src_root)
+
+# --- 2. DEBUGGING (Delete after verified) ---
+# st.write(f"DEBUG: Roots added: \n1. {project_root} \n2. {src_root}")
 
 # --- 3. IMPORTS ---
 try:
+    # Try importing directly now that 'src' is in path
+    from agent.core import CulinaryAgent, create_agent 
+    from agent.prompts import SYSTEM_PROMPT
+    from utils.state_manager import StateManager
+    # If the above fail, we can try the src. prefix too, but the paths above should cover it.
+except ImportError:
+    # Fallback to src. prefix if needed
     from src.agent.core import CulinaryAgent, create_agent
     from src.agent.prompts import SYSTEM_PROMPT
     from src.utils.state_manager import StateManager
-except ImportError as e:
-    st.error(f"CRITICAL ERROR: {e}")
-    st.write("Ensure your __init__.py files exist in src/ and src/agent/")
-    st.stop()
-
 # --- 3. INITIALIZATION ---
 
 @st.cache_resource
