@@ -2,43 +2,36 @@ import os
 import sys
 import streamlit as st
 
-# --- 1. ROBUST PATH SETUP ---
-# We need to find the folder that contains 'requirements.txt' (the Project Root)
+# --- 1. PATH SETUP (Based on your Screenshot) ---
+# Current file: .../culinary_agent/src/frontend/app.py
 current_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = current_dir
 
-# Keep going up one level until we find 'requirements.txt'
-while not os.path.exists(os.path.join(project_root, "requirements.txt")):
-    parent = os.path.dirname(project_root)
-    # Stop if we hit the very top of the file system to avoid infinite loop
-    if parent == project_root:
-        # Fallback: Just assume 2 levels up if search fails
-        project_root = os.path.abspath(os.path.join(current_dir, '../..'))
-        break
-    project_root = parent
+# Go up 3 levels: frontend -> src -> culinary_agent
+project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
 
-# Add this root to Python's path so we can do 'from src.agent...'
+# Add to Python Path
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
-# --- 2. IMPORTS FROM SRC ---
-# FIXED: Updated imports to match your folder structure
+# --- 2. DEBUGGING (Delete this section after it works) ---
+# This will prove if we found the right folder
 try:
-    # WAS: from src.core.agent import create_agent
-    # NOW: importing from src/agent/core.py
-    from src.agent.core import CulinaryAgent, create_agent 
-    
-    # WAS: from src.prompts.templates import SYSTEM_PROMPT
-    # NOW: importing from src/agent/prompts.py
-    from src.agent.prompts import SYSTEM_PROMPT 
-    
+    files_in_root = os.listdir(project_root)
+    if "src" not in files_in_root:
+        st.error(f"⚠️ ROOT ERROR: Expected to find 'src' folder in {project_root} but found: {files_in_root}")
+        st.stop()
+except Exception as e:
+    st.error(f"Path Error: {e}")
+# ---------------------------------------------------------
+
+# --- 3. IMPORTS ---
+try:
+    from src.agent.core import CulinaryAgent, create_agent
+    from src.agent.prompts import SYSTEM_PROMPT
     from src.utils.state_manager import StateManager
-    
 except ImportError as e:
-    st.error(f"CRITICAL ERROR: Could not import project modules. Details: {e}")
-    st.markdown("### Debugging Info")
-    st.write(f"Current Path: {sys.path[0]}")
-    st.write("Please check your folder structure in GitHub.")
+    st.error(f"CRITICAL ERROR: {e}")
+    st.write("Ensure your __init__.py files exist in src/ and src/agent/")
     st.stop()
 
 # --- 3. INITIALIZATION ---
