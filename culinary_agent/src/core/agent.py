@@ -46,9 +46,9 @@ class CulinaryAgent:
         self.max_steps = max_steps
         
         print(f"Initializing Culinary Agent with model: {self.model_id}")
-        
+        hf_token = os.getenv("HF_TOKEN")
         # Initialize the LLM model
-        self.model = InferenceClientModel(model_id=self.model_id)
+        self.model = InferenceClientModel(model_id=self.model_id, token=hf_token)
         
         # Initialize tools
         self.tools = self._initialize_tools()
