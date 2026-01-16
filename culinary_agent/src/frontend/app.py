@@ -2,11 +2,22 @@ import os
 import sys
 import streamlit as st
 
-# --- 1. SETUP PATHS (Monolith Mode) ---
-# We need to add the 'culinary_agent' root folder to Python's path
-current_dir = os.path.dirname(os.path.abspath(__file__)) # .../culinary_agent/frontend
-project_root = os.path.abspath(os.path.join(current_dir, '..')) # .../culinary_agent
+# --- 1. ROBUST PATH SETUP ---
+# We need to find the folder that contains 'requirements.txt' (the Project Root)
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = current_dir
 
+# Keep going up one level until we find 'requirements.txt'
+while not os.path.exists(os.path.join(project_root, "requirements.txt")):
+    parent = os.path.dirname(project_root)
+    # Stop if we hit the very top of the file system to avoid infinite loop
+    if parent == project_root:
+        # Fallback: Just assume 2 levels up if search fails
+        project_root = os.path.abspath(os.path.join(current_dir, '../..'))
+        break
+    project_root = parent
+
+# Add this root to Python's path so we can do 'from src.agent...'
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
