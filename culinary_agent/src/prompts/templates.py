@@ -21,8 +21,7 @@ AVAILABLE TOOLS:
    output_buffer = ""
    
    # A. Define User Intent
-   # Extract the raw user request and diet type
-   user_request = "create a plan"  # (Replace with actual request from context)
+   user_request = "create a plan"  # (Replace with actual request)
    target_diet = "balanced"        # (Extract diet type)
    
    # B. Define Tasks
@@ -38,39 +37,41 @@ AVAILABLE TOOLS:
 
 2. **EXECUTION LOOP**:
    for meal_type in tasks:
-       # SMART QUERY GENERATION (General Negative Constraint Logic)
-       # 1. Analyze 'user_request' for negative constraints (e.g., "no sandwich", "no mushrooms").
-       # 2. If a negative constraint exists for this meal, generate a query for a *specific alternative*.
-       #    Example: If "no sandwich", query = "balanced lunch salad" OR "balanced lunch wrap"
-       #    Example: If "no soup", query = "balanced dinner solid meal"
-       # 3. If no negative constraint, use standard query: f"{target_diet} {meal_type} recipe"
+       # --- STEP 2A: STRATEGIC QUERY GENERATION (The "Change" Logic) ---
+       # 1. Analyze 'user_request' for "Change/Replace" vs "Adjust/Tweak".
+       # 2. If NEGATIVE constraint (e.g., "no sandwich", "hate soup"), generate a DIVERGENT query.
+       #    (e.g., Query = "balanced lunch salad" instead of "balanced lunch recipe")
+       # 3. If "CHANGE" requested, ensure query searches for a DIFFERENT category than previous.
        
-       # (You must interpret the user_request and assign the best query string here)
+       # (Write python logic to determine the best 'current_query' string here)
        current_query = f"{target_diet} {meal_type} recipe" 
        
-       # Acquisition
+       # Acquisition (Try DB first)
        candidate = retrieve_recipe(query=current_query)
        
-       # Fallback checks
+       # Fallback: Web Search if DB is empty OR if user explicitly asked for something rare
        if not candidate or len(candidate) < 200 or "Found 0" in candidate:
            candidate = duckduckgo_search(query=current_query)
 
-       # VALIDATION (CRITICAL)
-       # Always validate against the FULL user_request to catch negative constraints.
+       # --- STEP 2B: VALIDATION & REPLACEMENT LOOP ---
+       # Check against FULL user constraints (e.g. "no mushrooms")
        status = validate_recipe(recipe_text=candidate, constraint=user_request)
        
-       # Self-Correction Loop
        if status == "FAIL":
-           # First attempt: Adaptation
-           candidate = adapt_recipe(recipe_text=candidate, target_diet=target_diet)
-           status = validate_recipe(recipe_text=candidate, constraint=user_request)
+           # DECISION POINT: Adapt vs. Replace
+           # If the failure is fundamental (e.g., user hates main ingredient), SEARCH AGAIN.
+           # If the failure is minor (e.g., remove salt), ADAPT.
            
-           # Second attempt: Search for a different category
-           if status == "FAIL":
-               # If the previous query failed (likely due to negative constraint), switch strategy.
-               # Search for a generally safe alternative.
-               alternative_query = f"{target_diet} {meal_type} alternative recipe"
+           if "change" in user_request.lower() or "different" in user_request.lower() or "no " in user_request.lower():
+               # STRATEGY: REPLACE (Find New)
+               alternative_query = f"{target_diet} {meal_type} alternative without restricted ingredients"
                candidate = duckduckgo_search(query=alternative_query)
+               # Validate the new candidate
+               status = validate_recipe(recipe_text=candidate, constraint=user_request)
+           
+           # If still failing (or if request was just "adjust"), try to Fix/Adapt
+           if status == "FAIL":
+               candidate = adapt_recipe(recipe_text=candidate, target_diet=target_diet)
 
        # Accumulate
        output_buffer += f"\\n{'='*20} {meal_type.upper()} {'='*20}\\n"
