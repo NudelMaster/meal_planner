@@ -17,8 +17,9 @@ FAISS_INDEX_FILE = INDICES_DIR / "recipe_index.faiss"
 # Model configuration
 # Available models: Qwen/Qwen2.5-7B-Instruct, meta-llama/Meta-Llama-3.1-8B-Instruct, mistralai/Mistral-7B-Instruct-v0.3
 MODEL_ID = os.getenv('MODEL_ID', "Qwen/Qwen2.5-7B-Instruct")
-EMBEDDING_MODEL_NAME = "BAAI/bge-m3"
+#EMBEDDING_MODEL_NAME = "BAAI/bge-m3" too heavy for streamlit
 
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 # Environment variables
 LANGFUSE_KEY = os.getenv('LANGFUSE_SECRET_KEY', '')
 

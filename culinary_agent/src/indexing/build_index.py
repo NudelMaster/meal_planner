@@ -1,6 +1,8 @@
 """FAISS index builder for recipe embeddings."""
 
 import json
+import sys
+import os
 from pathlib import Path
 from typing import List, Dict, Any
 
@@ -8,6 +10,11 @@ import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
 
+# Ensure we can find src modules if running this script directly
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../../"))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
 class RecipeIndexBuilder:
     """Builds and manages FAISS index for recipe embeddings."""
@@ -16,7 +23,8 @@ class RecipeIndexBuilder:
         self,
         embeddings_file: Path,
         index_file: Path,
-        embedding_model_name: str = "BAAI/bge-m3"
+        # UPDATED: Default to the lightweight model matching settings.py
+        embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2"
     ):
         """Initialize the index builder.
         
@@ -30,11 +38,7 @@ class RecipeIndexBuilder:
         self.embedding_model_name = embedding_model_name
     
     def load_data(self) -> List[Dict[str, Any]]:
-        """Load recipe data from JSONL file.
-        
-        Returns:
-            List of recipe dictionaries
-        """
+        """Load recipe data from JSONL file."""
         data: List[Dict[str, Any]] = []
         print(f"Loading data from '{self.embeddings_file}'...")
         
@@ -47,19 +51,12 @@ class RecipeIndexBuilder:
         
         print(f"Loaded {len(data)} recipes")
         if data:
-            print(f"Example document: {data[0]}")
+            print(f"Example document keys: {list(data[0].keys())}")
         
         return data
     
     def generate_embeddings(self, documents: List[str]) -> np.ndarray:
-        """Generate embeddings for documents.
-        
-        Args:
-            documents: List of document texts
-            
-        Returns:
-            Numpy array of embeddings (float32)
-        """
+        """Generate embeddings for documents."""
         print(f"Initializing embedding model: {self.embedding_model_name}...")
         embed_model = SentenceTransformer(self.embedding_model_name)
         
@@ -75,11 +72,7 @@ class RecipeIndexBuilder:
         return recipe_embeddings
     
     def build_and_save_index(self, embeddings: np.ndarray) -> None:
-        """Build FAISS index and save to disk.
-        
-        Args:
-            embeddings: Numpy array of embeddings
-        """
+        """Build FAISS index and save to disk."""
         print("Normalizing vectors...")
         # Normalize with respect to euclidean norm
         faiss.normalize_L2(embeddings)
@@ -95,7 +88,9 @@ class RecipeIndexBuilder:
         
         # Save the Index
         print(f"Saving FAISS index to '{self.index_file}'...")
-        self.index_file.parent.mkdir(parents=True, exist_ok=True)
+        if not self.index_file.parent.exists():
+             self.index_file.parent.mkdir(parents=True, exist_ok=True)
+             
         faiss.write_index(index, str(self.index_file))
         print("✓ Index saved successfully")
     
@@ -120,11 +115,26 @@ class RecipeIndexBuilder:
 
 def main():
     """Entry point for building the index."""
-    from config.settings import (
-        RECIPE_EMBEDDINGS_FILE,
-        FAISS_INDEX_FILE,
-        EMBEDDING_MODEL_NAME
-    )
+    # UPDATED: Import from src.config.settings
+    try:
+        from src.config.settings import (
+            RECIPE_EMBEDDINGS_FILE,
+            FAISS_INDEX_FILE,
+            EMBEDDING_MODEL_NAME
+        )
+    except ImportError:
+        # Fallback if running from root without src installed as package
+        try:
+            from config.settings import (
+                RECIPE_EMBEDDINGS_FILE,
+                FAISS_INDEX_FILE,
+                EMBEDDING_MODEL_NAME
+            )
+        except ImportError as e:
+            print(f"CRITICAL ERROR: Could not import settings. {e}")
+            return
+
+    print(f"Target Model: {EMBEDDING_MODEL_NAME}")
     
     builder = RecipeIndexBuilder(
         embeddings_file=RECIPE_EMBEDDINGS_FILE,
@@ -136,5 +146,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
     main()
