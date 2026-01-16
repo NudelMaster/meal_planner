@@ -1,47 +1,54 @@
 """Web search fallback tool using DuckDuckGo."""
 
 from typing import List, Dict, Any
-
 from smolagents import Tool
 
 try:
     from duckduckgo_search import DDGS
 except ImportError:
-    # Fallback to ddgs if duckduckgo_search is not available
+    # Fallback if specific version requires different import
     from ddgs import DDGS
-
 
 class WebSearchTool(Tool):
     """Searches the web for recipes using DuckDuckGo."""
     
     name = "duckduckgo_search"
-    description = "Searches the web for recipes. Returns the content of the best result as a string."
+    # --- SMART DESCRIPTION FOR THE AGENT ---
+    description = (
+        "Searches the live web for recipes. "
+        "USE THIS WHEN: "
+        "1. The local database returns 0 results. "
+        "2. The user has a very specific request (e.g. 'vegan lasagna without soy') "
+        "that requires finding a totally new recipe."
+    )
     inputs = {
-        "query": {"type": "string", "description": "Search query."}
+        "query": {
+            "type": "string", 
+            "description": "Specific search query (e.g. 'vegan lasagna without soy recipe')."
+        }
     }
     output_type = "string"
 
     def forward(self, query: str) -> str:
-        """Search the web for recipe information.
-        
-        Args:
-            query: The search query
-            
-        Returns:
-            Formatted string with search results
-        """
+        """Search the web for recipe information."""
         try:
+            # Use a context manager if possible, or direct instantiation
             results: List[Dict[str, Any]] = DDGS().text(query, max_results=3)
+            
             if not results:
                 return "No recipes found on the web."
             
-            # Format the list of results into a single string for the Agent
-            formatted_results = "Web Search Results:\n"
+            # Format the list of results
+            formatted_results = f"Web Search Results for '{query}':\n"
             for res in results:
+                title = res.get('title', 'Unknown Title')
+                body = res.get('body', 'No content')
+                url = res.get('href', '#')
+                
                 formatted_results += (
-                    f"TITLE: {res['title']}\n"
-                    f"CONTENT: {res['body']}\n"
-                    f"URL: {res['href']}\n\n"
+                    f"TITLE: {title}\n"
+                    f"CONTENT: {body}\n"
+                    f"URL: {url}\n\n"
                 )
             
             return formatted_results

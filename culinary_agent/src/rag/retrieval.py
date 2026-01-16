@@ -16,9 +16,18 @@ class RecipeRetrieverTool(Tool):
     """Retrieves the best matching recipes from the database using semantic search."""
     
     name = "retrieve_recipe"
-    description = "Retrieves the best matching recipe/s from the database. Returns raw title and ingredients."
+    # --- SMART DESCRIPTION FOR THE AGENT ---
+    description = (
+        "Retrieves recipes from the local database using vector search. "
+        "USE THIS FIRST. "
+        "IMPORTANT: The search engine ignores 'not' and 'no'. "
+        "If user says 'NO sandwich', query for 'salad' or 'soup' instead."
+    )
     inputs = {
-        "query": {"type": "string", "description": "Dish name or ingredients."},
+        "query": {
+            "type": "string", 
+            "description": "Optimized search keywords (e.g., 'chicken pasta'). Avoid negative words."
+        },
     }
     output_type = "string"
     
@@ -27,19 +36,12 @@ class RecipeRetrieverTool(Tool):
         embeddings_file: Path,
         full_recipes_file: Path,
         index_file: Path,
-        embedding_model_name: str = "BAAI/bge-m3",
+        # --- FIX: DEFAULT TO LIGHTWEIGHT MODEL ---
+        embedding_model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
         k: int = 1,
         **kwargs
     ):
-        """Initialize the recipe retrieval tool.
-        
-        Args:
-            embeddings_file: Path to the JSONL file with recipe embeddings metadata
-            full_recipes_file: Path to the JSON file with full recipe details
-            index_file: Path to the FAISS index file
-            embedding_model_name: Name of the sentence transformer model
-            k: Number of top recipes to retrieve (default: 1)
-        """
+        """Initialize the recipe retrieval tool."""
         super().__init__(**kwargs)
         self.k = k
         self.embeddings_file = embeddings_file
@@ -51,13 +53,16 @@ class RecipeRetrieverTool(Tool):
         
         # Load metadata from embeddings file
         self.metadata: List[Dict[str, Any]] = []
-        with open(self.embeddings_file, 'r') as f:
-            for line in f:
-                self.metadata.append(json.loads(line))
+        if self.embeddings_file.exists():
+            with open(self.embeddings_file, 'r') as f:
+                for line in f:
+                    self.metadata.append(json.loads(line))
         
-        # Load full recipe details (with ingredients and directions)
-        with open(self.full_recipes_file, 'r') as f:
-            full_recipes = json.load(f)
+        # Load full recipe details
+        full_recipes = []
+        if self.full_recipes_file.exists():
+            with open(self.full_recipes_file, 'r') as f:
+                full_recipes = json.load(f)
         
         # HashTable for optimized lookup
         self.recipe_lookup: Dict[str, Dict[str, Any]] = {
@@ -72,29 +77,28 @@ class RecipeRetrieverTool(Tool):
         
         # Load FAISS index
         print("Loading FAISS index...")
-        self.index = faiss.read_index(str(self.index_file))
-        
-        print(f"✓ Recipe retrieval system loaded: {len(self.metadata)} recipes indexed")
+        if self.index_file.exists():
+            self.index = faiss.read_index(str(self.index_file))
+            print(f"✓ Recipe retrieval system loaded: {len(self.metadata)} recipes indexed")
+        else:
+            print("⚠️ WARNING: FAISS index not found. Retrieval will fail.")
+            self.index = None
     
     @robust_llm_call
     def forward(self, query: str) -> str:
-        """Search for recipes matching the query.
-        
-        Args:
-            query: Natural language search query
-            
-        Returns:
-            Formatted string with recipe titles, ingredients, and directions
-        """
+        """Search for recipes matching the query."""
         try:
+            if not self.index:
+                return "Error: Database not initialized."
+
             if not query or not isinstance(query, str):
                 return "Found 0 recipes."
             
-            # 1. Embed the Query and Ensure Float 32 (Required by FAISS)
+            # 1. Embed the Query
             query_vec = self.embed_model.encode([query], convert_to_tensor=False)
             query_vec = np.array(query_vec).astype('float32')
             
-            # 2. Normalize euclidean distance
+            # 2. Normalize
             faiss.normalize_L2(query_vec)
             
             # 3. Search
@@ -104,14 +108,17 @@ class RecipeRetrieverTool(Tool):
             retrieved_docs = [
                 self.metadata[idx] 
                 for idx in indices[0] 
-                if idx != -1
+                if idx != -1 and idx < len(self.metadata)
             ]
             
+            if not retrieved_docs:
+                return f"Found 0 recipes matching '{query}'."
+
             # 5. Format Output
             output = f"Found {len(retrieved_docs)} recipes matching '{query}':\n\n"
             
             for i, doc in enumerate(retrieved_docs, 1):
-                title = doc['title'].strip()
+                title = doc.get('title', '').strip()
                 full_recipe = self.recipe_lookup.get(title)
                 
                 output += f"{'='*40} Recipe {i} {'='*40}\n"
@@ -126,7 +133,6 @@ class RecipeRetrieverTool(Tool):
                         [f" {j}. {step}" for j, step in enumerate(directions, 1)]
                     )
                 else:
-                    # Fallback
                     output += f"SUMMARY: {doc.get('text_for_embedding', 'No details available')}"
                 
                 output += "\n\n"
