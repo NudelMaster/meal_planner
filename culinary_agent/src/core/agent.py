@@ -46,9 +46,16 @@ class CulinaryAgent:
         self.max_steps = max_steps
         
         print(f"Initializing Culinary Agent with model: {self.model_id}")
+        # --- FIX: GET TOKEN & FORCE PROVIDER ---
         hf_token = os.getenv("HF_TOKEN")
-        # Initialize the LLM model
-        self.model = InferenceClientModel(model_id=self.model_id, token=hf_token)
+        if not hf_token:
+            print("⚠️ WARNING: HF_TOKEN not found in environment/secrets!")
+
+        self.model = InferenceClientModel(
+            model_id=self.model_id,
+            token=hf_token,
+            provider="hf-inference"  # <--- CRITICAL LINE
+        )
         
         # Initialize tools
         self.tools = self._initialize_tools()
