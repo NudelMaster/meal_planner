@@ -6,8 +6,8 @@ import streamlit as st
 # Current file: .../culinary_agent/src/frontend/app.py
 current_dir = os.path.dirname(os.path.abspath(__file__))
 
-# Go up 3 levels: frontend -> src -> culinary_agent
-project_root = os.path.abspath(os.path.join(current_dir, "../../.."))
+# Go up 2 levels: frontend -> src -> culinary_agent
+project_root = os.path.abspath(os.path.join(current_dir, "../../"))
 
 # Add to Python Path
 if project_root not in sys.path:
