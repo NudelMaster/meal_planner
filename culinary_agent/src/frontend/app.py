@@ -3,49 +3,71 @@ import sys
 import streamlit as st
 
 # --- 1. SETUP PATHS (Monolith Mode) ---
-current_dir = os.path.dirname(os.path.abspath(__file__))
-# Go up two levels: frontend -> src -> culinary_agent (project root)
-project_root = os.path.abspath(os.path.join(current_dir, '../..'))
+# We need to add the 'culinary_agent' root folder to Python's path
+current_dir = os.path.dirname(os.path.abspath(__file__)) # .../culinary_agent/frontend
+project_root = os.path.abspath(os.path.join(current_dir, '..')) # .../culinary_agent
+
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
 # --- 2. IMPORTS FROM SRC ---
+# FIXED: Updated imports to match your folder structure
 try:
-    from src.core.agent import create_agent
-    from src.prompts.templates import SYSTEM_PROMPT
+    # WAS: from src.core.agent import create_agent
+    # NOW: importing from src/agent/core.py
+    from src.agent.core import CulinaryAgent, create_agent 
+    
+    # WAS: from src.prompts.templates import SYSTEM_PROMPT
+    # NOW: importing from src/agent/prompts.py
+    from src.agent.prompts import SYSTEM_PROMPT 
+    
     from src.utils.state_manager import StateManager
+    
 except ImportError as e:
     st.error(f"CRITICAL ERROR: Could not import project modules. Details: {e}")
+    st.markdown("### Debugging Info")
+    st.write(f"Current Path: {sys.path[0]}")
+    st.write("Please check your folder structure in GitHub.")
     st.stop()
 
 # --- 3. INITIALIZATION ---
 
 @st.cache_resource
 def get_agent():
-    """Initialize the agent once (cached). Matches CLI parameters."""
-    # Matches CLI: top_k=1, max_steps=15
+    """Initialize the agent once (cached)."""
+    # Using the factory function from your structure
     return create_agent(top_k_recipes=1, max_steps=15)
 
 def load_session_state():
     """Syncs Streamlit session with the persistent StateManager on disk."""
-    state_manager = StateManager()
-    
-    if 'state_manager' not in st.session_state:
-        st.session_state.state_manager = state_manager
+    try:
+        state_manager = StateManager()
         
-    # Check for previous session on disk if we don't have one in RAM
-    if 'current_plan' not in st.session_state:
-        if state_manager.has_state():
-            st.session_state.current_plan = state_manager.load_state()
-        else:
-            st.session_state.current_plan = None
+        if 'state_manager' not in st.session_state:
+            st.session_state.state_manager = state_manager
+            
+        if 'current_plan' not in st.session_state:
+            if state_manager.has_state():
+                st.session_state.current_plan = state_manager.load_state()
+            else:
+                st.session_state.current_plan = None
+    except Exception as e:
+        # Fallback if state manager fails (e.g. permission issues on cloud)
+        st.warning(f"State Manager warning: {e}. Session will be temporary.")
+        if 'current_plan' not in st.session_state:
+             st.session_state.current_plan = None
 
 def main():
     st.set_page_config(page_title="Culinary Agent CLI-GUI", page_icon="🍳", layout="wide")
     
     # Initialize State
     load_session_state()
-    agent = get_agent()
+    
+    try:
+        agent = get_agent()
+    except Exception as e:
+        st.error(f"Agent Initialization Failed: {e}")
+        st.stop()
     
     # --- UI HEADER ---
     st.title("🍳 Smart Culinary Agent")
@@ -62,7 +84,7 @@ def main():
             help="e.g. 'Vegan', 'High Protein', 'No Mushrooms'"
         )
         
-        # 2. MODE SELECTION (Matches CLI Options 1-4)
+        # 2. MODE SELECTION
         has_plan = st.session_state.current_plan is not None
         
         mode_options = [
@@ -72,21 +94,16 @@ def main():
             "4. Modify Dinner Only"
         ]
         
-        # Disable update options if no plan exists
         if not has_plan:
             st.info("ℹ️ Generate a plan first to enable specific meal updates.")
-            # Only allow option 1
             choice_idx = 0 
-            disabled_modes = True
         else:
             choice_idx = 0
-            disabled_modes = False
 
         selected_mode = st.radio(
             "Select Action:", 
             mode_options, 
-            index=choice_idx,
-            disabled=False # We handle valid logic inside the button
+            index=choice_idx
         )
 
         # 3. ACTIONS
@@ -95,19 +112,19 @@ def main():
             run_btn = st.button("🚀 Execute", type="primary", use_container_width=True)
         with col2:
             if st.button("🗑️ Clear", use_container_width=True):
-                st.session_state.state_manager.clear_state()
+                if hasattr(st.session_state, 'state_manager'):
+                    st.session_state.state_manager.clear_state()
                 st.session_state.current_plan = None
                 st.rerun()
 
-    # --- MAIN EXECUTION LOGIC (Mirrors run_cli) ---
+    # --- MAIN EXECUTION LOGIC ---
     if run_btn:
         # 1. Validate Mode
-        # If user tries to update a specific meal but has no plan, force Full Day
         if not has_plan and "Full Day" not in selected_mode:
             st.warning("⚠️ Cannot update a specific meal without an existing plan. Switching to Full Day Plan.")
             selected_mode = "1. Generate Full Day Plan"
 
-        # 2. Construct 'user_request' (Matches CLI logic)
+        # 2. Construct 'user_request'
         if "1." in selected_mode:
             user_request = f"Create a full daily meal plan. Constraint: {diet_request}"
         elif "2." in selected_mode:
@@ -117,14 +134,12 @@ def main():
         elif "4." in selected_mode:
             user_request = f"Update ONLY the Dinner. Constraint: {diet_request}"
         
-        # 3. Construct 'full_prompt' (Matches CLI logic)
+        # 3. Construct 'full_prompt'
         current_context = st.session_state.current_plan
         
         if not current_context:
-            # Fresh Start
             full_prompt = f"{SYSTEM_PROMPT}\n\nUSER REQUEST: {user_request}"
         else:
-            # Context Aware Update
             full_prompt = f"""
             {SYSTEM_PROMPT}
 
@@ -142,7 +157,7 @@ def main():
         # 4. Run Agent
         with st.spinner(f"Agent is thinking... [Task: {user_request}]"):
             try:
-                # Direct string pass, just like CLI
+                # Check for run vs run_with_retry
                 if hasattr(agent, 'run_with_retry'):
                      response = agent.run_with_retry(full_prompt)
                 else:
@@ -151,7 +166,10 @@ def main():
                 # 5. Save State
                 result_text = str(response)
                 st.session_state.current_plan = result_text
-                st.session_state.state_manager.save_state(result_text)
+                
+                if hasattr(st.session_state, 'state_manager'):
+                    st.session_state.state_manager.save_state(result_text)
+                
                 st.rerun()
                 
             except Exception as e:
@@ -163,11 +181,11 @@ def main():
         st.markdown(st.session_state.current_plan)
         
         with st.expander("📝 View Raw Text / Manual Edit"):
-            # Allow manual override (which also saves to disk via StateManager)
             edited_text = st.text_area("Edit Plan", st.session_state.current_plan, height=300)
             if st.button("Save Manual Edits"):
                 st.session_state.current_plan = edited_text
-                st.session_state.state_manager.save_state(edited_text)
+                if hasattr(st.session_state, 'state_manager'):
+                    st.session_state.state_manager.save_state(edited_text)
                 st.success("Saved!")
                 st.rerun()
     else:
