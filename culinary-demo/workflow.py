@@ -27,7 +27,29 @@ class QueryEvent(Event):
     """Event triggered when we have valid context to answer."""
     context_str: str
 
+class WebSearchEvent(Event):
+    """Event to trigger web search."""
+    query: str
+
 # --- Prompts ---
+
+WEB_SEARCH_PROMPT = PromptTemplate(
+    template="""You are a culinary assistant. Extract and format recipes from the following web search results.
+    
+    User Query: "{user_query}"
+    
+    Web Results:
+    {results_context}
+    
+    Instructions:
+    - Extract distinct recipes found in the text.
+    - Return a JSON array of objects with keys: "title", "recipe_text".
+    - "recipe_text" should include Title, Ingredients, and Directions.
+    - If ingredients/directions are missing, summarize what is available and include the Source URL.
+    - Output JSON only.
+    
+    Formatted Recipes:"""
+)
 
 QUERY_OPTIMIZER_PROMPT = PromptTemplate(
     template="""You are a culinary search expert. Your goal is to translate a user's natural language request into a specific, keyword-rich search query that will match recipe titles, ingredients, and categories.
@@ -128,20 +150,62 @@ class CorrectiveRAGWorkflow(Workflow):
         self.tavily_client = TavilyClient(api_key=tavily_api_key)
 
     @step
-    async def optimize_query(self, ctx: Context, ev: StartEvent) -> OptimizeQueryEvent:
+    async def optimize_query(self, ctx: Context, ev: StartEvent) -> OptimizeQueryEvent | WebSearchEvent:
         """Translate user intent into a keyword-rich search query."""
         user_query = ev.get("query_str")
+        search_mode = ev.get("search_mode", "db") # "db" or "web"
+        
         if not user_query:
             return None
         
-        ctx.store.set("user_query", user_query)
+        await ctx.store.set("user_query", user_query)
         
         prompt = QUERY_OPTIMIZER_PROMPT.format(user_query=user_query)
         response = await self.llm.acomplete(prompt)
         optimized_query = response.text.strip()
         
-        print(f"DEBUG: Optimized Query: '{optimized_query}'")
-        return OptimizeQueryEvent(optimized_query=optimized_query)
+        print(f"DEBUG: Optimized Query: '{optimized_query}' (Mode: {search_mode})")
+        
+        if search_mode == "web":
+            return WebSearchEvent(query=optimized_query)
+        else:
+            return OptimizeQueryEvent(optimized_query=optimized_query)
+
+    @step
+    async def web_search(self, ctx: Context, ev: WebSearchEvent) -> StopEvent:
+        """Search Tavily for recipes."""
+        query = ev.query
+        user_query = await ctx.store.get("user_query")
+        
+        print(f"DEBUG: Searching web for '{query}'...")
+        try:
+            # 1. Search Tavily
+            search_result = self.tavily_client.search(
+                query=f"{query} recipe full ingredients directions",
+                search_depth="advanced",
+                max_results=5
+            )
+            
+            results_context = ""
+            for i, res in enumerate(search_result.get("results", [])):
+                results_context += f"Source {i+1}: {res['title']}\n{res['content']}\nURL: {res['url']}\n\n"
+
+            if not results_context:
+                return StopEvent(result="[]")
+
+            # 2. Use LLM to format
+            prompt = WEB_SEARCH_PROMPT.format(
+                user_query=user_query,
+                results_context=results_context
+            )
+            
+            response = await self.llm.acomplete(prompt)
+            formatted_json = response.text.strip()
+            return StopEvent(result=formatted_json)
+            
+        except Exception as e:
+            print(f"ERROR: Web search failed: {e}")
+            return StopEvent(result="[]")
 
     @step
     async def retrieve(self, ctx: Context, ev: OptimizeQueryEvent) -> RetrieveEvent:
@@ -159,7 +223,7 @@ class CorrectiveRAGWorkflow(Workflow):
     @step
     async def eval_relevance(self, ctx: Context, ev: RetrieveEvent) -> QueryEvent:
         """Evaluate candidates and select the best 3."""
-        user_query = ctx.store.get("user_query")
+        user_query = await ctx.store.get("user_query")
         retrieved_nodes = ev.retrieved_nodes
         
         if not retrieved_nodes:
