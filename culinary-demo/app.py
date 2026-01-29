@@ -423,6 +423,9 @@ if st.session_state.all_recipes:
             with st.container():
                 st.markdown(f"**Option {idx + 1}: {title}** {'🌐' if is_web else ''}")
                 st.caption(snippet)
+                if recipe_text:
+                    with st.expander("View full recipe"):
+                        st.markdown(recipe_text)
                 if st.button(f"Select Option {idx + 1}", key=f"select_recipe_{idx}", use_container_width=True):
                     st.session_state.selected_recipe_index = idx
                     st.session_state.selected_recipe = recipe
