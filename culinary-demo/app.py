@@ -70,6 +70,12 @@ if "adaptation_history" not in st.session_state:
 if "all_recipes" not in st.session_state:
     st.session_state.all_recipes = []
 
+if "candidate_recipes" not in st.session_state:
+    st.session_state.candidate_recipes = []
+
+if "candidate_index" not in st.session_state:
+    st.session_state.candidate_index = 0
+
 if "shown_recipe_titles" not in st.session_state:
     st.session_state.shown_recipe_titles = set()
 
@@ -111,6 +117,10 @@ def save_current_session():
         "messages": st.session_state.messages,
         "top_recipes": st.session_state.top_recipes,
         "all_recipes": st.session_state.all_recipes,
+        "candidate_recipes": st.session_state.candidate_recipes,
+        "candidate_index": st.session_state.candidate_index,
+        "shown_recipe_titles": list(st.session_state.shown_recipe_titles),
+        "database_exhausted": st.session_state.database_exhausted,
         "selected_recipe": st.session_state.selected_recipe,
         "selected_recipe_index": st.session_state.selected_recipe_index,
         "selected_recipe_response": st.session_state.selected_recipe_response,
@@ -130,7 +140,13 @@ def load_session(session_data):
     st.session_state.messages = session_data.get("messages", [])
     st.session_state.top_recipes = session_data.get("top_recipes", [])
     st.session_state.all_recipes = session_data.get("all_recipes", [])
-    st.session_state.shown_recipe_titles = {r.get("title") for r in st.session_state.all_recipes}
+    st.session_state.candidate_recipes = session_data.get("candidate_recipes", [])
+    st.session_state.candidate_index = session_data.get("candidate_index", 0)
+    stored_titles = session_data.get("shown_recipe_titles", [])
+    if stored_titles:
+        st.session_state.shown_recipe_titles = set(stored_titles)
+    else:
+        st.session_state.shown_recipe_titles = {r.get("title") for r in st.session_state.all_recipes}
     st.session_state.last_query = session_data.get("query")
     st.session_state.selected_recipe = session_data.get("selected_recipe")
     st.session_state.selected_recipe_index = session_data.get("selected_recipe_index")
@@ -140,13 +156,15 @@ def load_session(session_data):
     st.session_state.adaptation_options = session_data.get("adaptation_options", [])
     st.session_state.adaptation_goal = session_data.get("adaptation_goal", "")
     st.session_state.viewing_history_mode = True
-    st.session_state.database_exhausted = False
+    st.session_state.database_exhausted = session_data.get("database_exhausted", False)
 
 def clear_current_session():
     """Reset the current session state."""
     st.session_state.messages = []
     st.session_state.top_recipes = []
     st.session_state.all_recipes = []
+    st.session_state.candidate_recipes = []
+    st.session_state.candidate_index = 0
     st.session_state.shown_recipe_titles = set()
     st.session_state.last_query = None
     st.session_state.selected_recipe_index = None
@@ -158,6 +176,25 @@ def clear_current_session():
     st.session_state.adaptation_goal = ""
     st.session_state.viewing_history_mode = False
     st.session_state.database_exhausted = False
+
+def append_next_batch(batch_size: int = 3) -> int:
+    """Append the next batch of recipes to the display list."""
+    candidates = st.session_state.candidate_recipes
+    start = st.session_state.candidate_index
+    if start >= len(candidates):
+        return 0
+
+    end = min(start + batch_size, len(candidates))
+    next_batch = candidates[start:end]
+    st.session_state.all_recipes.extend(next_batch)
+
+    for recipe in next_batch:
+        title = recipe.get("title")
+        if title:
+            st.session_state.shown_recipe_titles.add(title)
+
+    st.session_state.candidate_index = end
+    return len(next_batch)
 
 # --- Resource Loading ---
 def initialize_resources():
@@ -337,8 +374,17 @@ def as_string_list(value: Any) -> List[str]:
     return []
 
 
-async def run_workflow_async(workflow: CorrectiveRAGWorkflow, query: str, mode: str = "db") -> StopEvent:
-    handler = workflow.run(query_str=query, search_mode=mode)
+async def run_workflow_async(
+    workflow: CorrectiveRAGWorkflow,
+    query: str,
+    mode: str = "db",
+    excluded_titles: Optional[List[str]] = None,
+) -> StopEvent:
+    handler = workflow.run(
+        query_str=query,
+        search_mode=mode,
+        excluded_titles=excluded_titles or [],
+    )
     return await handler
 
 
@@ -376,6 +422,8 @@ if prompt := st.chat_input("Ask for a recipe or cooking tip..."):
                 # Just clear specific recipe state for new search
                 st.session_state.top_recipes = []
                 st.session_state.all_recipes = []
+                st.session_state.candidate_recipes = []
+                st.session_state.candidate_index = 0
                 st.session_state.shown_recipe_titles = set()
                 st.session_state.selected_recipe = None
                 st.session_state.current_recipe = None
@@ -384,18 +432,26 @@ if prompt := st.chat_input("Ask for a recipe or cooking tip..."):
                 st.session_state.adaptation_history = []
                 st.session_state.adaptation_options = []
                 st.session_state.database_exhausted = False
-                
-                result = asyncio.run(run_workflow_async(workflow, prompt))
+
+                result = asyncio.run(run_workflow_async(workflow, prompt, excluded_titles=[]))
                 raw_result = result.result if isinstance(result, StopEvent) else str(result)
                 recipes = normalize_recipes(parse_json_list(raw_result))
                 if not recipes:
                     st.error("No recipes were returned. Please try another query.")
                 else:
-                    st.session_state.top_recipes = recipes
-                    st.session_state.all_recipes.extend(recipes)
-                    for r in recipes:
-                        st.session_state.shown_recipe_titles.add(r.get("title"))
-                    
+                    seen_titles = set()
+                    deduped = []
+                    for recipe in recipes:
+                        title = recipe.get("title")
+                        if title and title not in seen_titles:
+                            deduped.append(recipe)
+                            seen_titles.add(title)
+
+                    st.session_state.candidate_recipes = deduped
+                    st.session_state.candidate_index = 0
+                    append_next_batch()
+                    st.session_state.top_recipes = st.session_state.all_recipes[:3]
+
                     st.session_state.last_query = prompt
                     st.session_state.viewing_history_mode = False # Edited new content -> active mode
                     
@@ -422,6 +478,8 @@ if st.session_state.all_recipes:
             # Recipe Card
             with st.container():
                 st.markdown(f"**Option {idx + 1}: {title}** {'🌐' if is_web else ''}")
+                if is_web:
+                    st.caption("Source: Web search")
                 st.caption(snippet)
                 if recipe_text:
                     with st.expander("View full recipe"):
@@ -440,55 +498,58 @@ if st.session_state.all_recipes:
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        if st.button("🔄 Generate More Recipes", use_container_width=True, disabled=st.session_state.database_exhausted):
-            with st.spinner("Searching for more unique recipes..."):
-                # Run workflow again
-                try:
-                    # We might need to handle this in a separate function to avoid code duplication
-                    # But for now, inline is fine
-                    new_result = asyncio.run(run_workflow_async(workflow, st.session_state.last_query))
-                    raw_new = new_result.result if isinstance(new_result, StopEvent) else str(new_result)
-                    new_recipes = normalize_recipes(parse_json_list(raw_new))
-                    
-                    # Filter duplicates
-                    unique_new = []
-                    for r in new_recipes:
-                        if r.get("title") not in st.session_state.shown_recipe_titles:
-                            unique_new.append(r)
-                            st.session_state.shown_recipe_titles.add(r.get("title"))
-                    
-                    if unique_new:
-                        st.session_state.all_recipes.extend(unique_new)
-                        st.success(f"Found {len(unique_new)} new recipes!")
-                        st.rerun()
-                    else:
-                        st.session_state.database_exhausted = True
-                        st.warning("No more unique recipes found in database.")
-                        st.rerun()
-                        
-                except Exception as e:
-                    st.error(f"Error fetching more recipes: {e}")
+        if st.button("🔄 Generate More Recipes", use_container_width=True):
+            with st.spinner("Loading more recipes..."):
+                added = append_next_batch()
+                if added:
+                    st.success(f"Added {added} more recipes!")
+                    st.rerun()
+                else:
+                    st.session_state.database_exhausted = True
+                    st.warning(
+                        "No more recipes found in the database for this prompt. "
+                        "Try searching online or enter a new prompt."
+                    )
 
     with col2:
-        if st.session_state.database_exhausted:
-            if st.button("🌐 Search Online (Tavily)", use_container_width=True):
-                with st.spinner("Searching the web..."):
-                    # Use Workflow with search_mode="web"
-                    result = asyncio.run(run_workflow_async(workflow, st.session_state.last_query, mode="web"))
-                    raw_result = result.result if isinstance(result, StopEvent) else str(result)
-                    web_recipes = normalize_recipes(parse_json_list(raw_result))
-                    
-                    if web_recipes:
-                        # Mark as web source
-                        for r in web_recipes:
+        if st.button("🌐 Search Online (Tavily)", use_container_width=True):
+            with st.spinner("Searching the web..."):
+                # Use Workflow with search_mode="web"
+                result = asyncio.run(
+                    run_workflow_async(
+                        workflow,
+                        st.session_state.last_query,
+                        mode="web",
+                        excluded_titles=list(st.session_state.shown_recipe_titles),
+                    )
+                )
+                raw_result = result.result if isinstance(result, StopEvent) else str(result)
+                web_recipes = normalize_recipes(parse_json_list(raw_result))
+
+                if web_recipes:
+                    existing_titles = {r.get("title") for r in st.session_state.candidate_recipes}
+                    unique_web = []
+                    for r in web_recipes:
+                        title = r.get("title")
+                        if title and title not in st.session_state.shown_recipe_titles and title not in existing_titles:
                             r["source"] = "web"
-                            st.session_state.shown_recipe_titles.add(r.get("title"))
-                        
-                        st.session_state.all_recipes.extend(web_recipes)
-                        st.success(f"Found {len(web_recipes)} recipes from the web!")
+                            unique_web.append(r)
+                            st.session_state.shown_recipe_titles.add(title)
+
+                    if unique_web:
+                        st.session_state.all_recipes.extend(unique_web)
+                        st.success(f"Found {len(unique_web)} recipes from the web!")
                         st.rerun()
                     else:
-                        st.error("Could not find relevant recipes online.")
+                        st.error("No new unique web recipes found.")
+                else:
+                    st.error("Could not find relevant recipes online.")
+
+    if st.session_state.database_exhausted:
+        st.warning(
+            "No more recipes found in the database for this prompt. "
+            "Try searching online or enter a new prompt."
+        )
 
 if st.session_state.current_recipe:
     st.markdown("---")
