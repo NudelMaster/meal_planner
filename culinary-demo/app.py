@@ -85,6 +85,9 @@ if "database_exhausted" not in st.session_state:
 if "viewing_history_mode" not in st.session_state:
     st.session_state.viewing_history_mode = False
 
+if "no_db_results" not in st.session_state:
+    st.session_state.no_db_results = False
+
 # --- Helper Functions ---
 
 def scroll_to_bottom():
@@ -121,6 +124,7 @@ def save_current_session():
         "candidate_index": st.session_state.candidate_index,
         "shown_recipe_titles": list(st.session_state.shown_recipe_titles),
         "database_exhausted": st.session_state.database_exhausted,
+        "no_db_results": st.session_state.no_db_results,
         "selected_recipe": st.session_state.selected_recipe,
         "selected_recipe_index": st.session_state.selected_recipe_index,
         "selected_recipe_response": st.session_state.selected_recipe_response,
@@ -157,6 +161,7 @@ def load_session(session_data):
     st.session_state.adaptation_goal = session_data.get("adaptation_goal", "")
     st.session_state.viewing_history_mode = True
     st.session_state.database_exhausted = session_data.get("database_exhausted", False)
+    st.session_state.no_db_results = session_data.get("no_db_results", False)
 
 def clear_current_session():
     """Reset the current session state."""
@@ -176,6 +181,7 @@ def clear_current_session():
     st.session_state.adaptation_goal = ""
     st.session_state.viewing_history_mode = False
     st.session_state.database_exhausted = False
+    st.session_state.no_db_results = False
 
 def append_next_batch(batch_size: int = 3) -> int:
     """Append the next batch of recipes to the display list."""
@@ -195,6 +201,23 @@ def append_next_batch(batch_size: int = 3) -> int:
 
     st.session_state.candidate_index = end
     return len(next_batch)
+
+
+def reset_search_state() -> None:
+    """Reset search-related state without clearing chat history."""
+    st.session_state.top_recipes = []
+    st.session_state.all_recipes = []
+    st.session_state.candidate_recipes = []
+    st.session_state.candidate_index = 0
+    st.session_state.shown_recipe_titles = set()
+    st.session_state.selected_recipe = None
+    st.session_state.current_recipe = None
+    st.session_state.selected_recipe_index = None
+    st.session_state.selected_recipe_response = None
+    st.session_state.adaptation_history = []
+    st.session_state.adaptation_options = []
+    st.session_state.database_exhausted = False
+    st.session_state.no_db_results = False
 
 # --- Resource Loading ---
 def initialize_resources():
@@ -374,6 +397,41 @@ def as_string_list(value: Any) -> List[str]:
     return []
 
 
+def run_web_search(workflow: CorrectiveRAGWorkflow, query: str) -> int:
+    if not query:
+        return 0
+    result = asyncio.run(
+        run_workflow_async(
+            workflow,
+            query,
+            mode="web",
+            excluded_titles=list(st.session_state.shown_recipe_titles),
+        )
+    )
+    raw_result = result.result if isinstance(result, StopEvent) else str(result)
+    web_recipes = normalize_recipes(parse_json_list(raw_result))
+    if not web_recipes:
+        return 0
+
+    existing_titles = {r.get("title") for r in st.session_state.candidate_recipes}
+    unique_web = []
+    for recipe in web_recipes:
+        title = recipe.get("title")
+        if (
+            title
+            and title not in st.session_state.shown_recipe_titles
+            and title not in existing_titles
+        ):
+            recipe["source"] = "web"
+            unique_web.append(recipe)
+            st.session_state.shown_recipe_titles.add(title)
+
+    if unique_web:
+        st.session_state.all_recipes.extend(unique_web)
+        return len(unique_web)
+    return 0
+
+
 async def run_workflow_async(
     workflow: CorrectiveRAGWorkflow,
     query: str,
@@ -420,24 +478,15 @@ if prompt := st.chat_input("Ask for a recipe or cooking tip..."):
                 # If we are already viewing a recipe or history, a new prompt should reset the search
                 # But keep the session unless "New Session" is clicked.
                 # Just clear specific recipe state for new search
-                st.session_state.top_recipes = []
-                st.session_state.all_recipes = []
-                st.session_state.candidate_recipes = []
-                st.session_state.candidate_index = 0
-                st.session_state.shown_recipe_titles = set()
-                st.session_state.selected_recipe = None
-                st.session_state.current_recipe = None
-                st.session_state.selected_recipe_index = None
-                st.session_state.selected_recipe_response = None
-                st.session_state.adaptation_history = []
-                st.session_state.adaptation_options = []
-                st.session_state.database_exhausted = False
+                reset_search_state()
+                st.session_state.no_db_results = False
 
                 result = asyncio.run(run_workflow_async(workflow, prompt, excluded_titles=[]))
                 raw_result = result.result if isinstance(result, StopEvent) else str(result)
                 recipes = normalize_recipes(parse_json_list(raw_result))
                 if not recipes:
-                    st.error("No recipes were returned. Please try another query.")
+                    st.session_state.last_query = prompt
+                    st.session_state.no_db_results = True
                 else:
                     seen_titles = set()
                     deduped = []
@@ -453,6 +502,7 @@ if prompt := st.chat_input("Ask for a recipe or cooking tip..."):
                     st.session_state.top_recipes = st.session_state.all_recipes[:3]
 
                     st.session_state.last_query = prompt
+                    st.session_state.no_db_results = False
                     st.session_state.viewing_history_mode = False # Edited new content -> active mode
                     
                     summary = "Found recipes. Choose one below."
@@ -463,6 +513,35 @@ if prompt := st.chat_input("Ask for a recipe or cooking tip..."):
             import traceback
             st.error(f"Error occurred: {e}")
             st.error(f"Traceback:\n{traceback.format_exc()}")
+
+if st.session_state.no_db_results and not st.session_state.all_recipes:
+    query = st.session_state.last_query or "your query"
+    st.warning(f"No matching recipe found for '{query}' in the database.")
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if st.button(
+            "🌐 Search Online (Tavily)",
+            key="web_search_no_results",
+            use_container_width=True,
+        ):
+            with st.spinner("Searching the web..."):
+                added = run_web_search(workflow, query)
+                if added:
+                    st.session_state.no_db_results = False
+                    st.success(f"Found {added} recipes from the web!")
+                    st.rerun()
+                else:
+                    st.error("Could not find relevant recipes online.")
+    with col2:
+        if st.button(
+            "🔄 Search for a different recipe",
+            key="retry_db_search",
+            use_container_width=True,
+        ):
+            reset_search_state()
+            st.session_state.last_query = None
+            st.session_state.no_db_results = False
+            st.rerun()
 
 if st.session_state.all_recipes:
     st.subheader(f"Found Recipes ({len(st.session_state.all_recipes)})")
@@ -514,34 +593,10 @@ if st.session_state.all_recipes:
     with col2:
         if st.button("🌐 Search Online (Tavily)", use_container_width=True):
             with st.spinner("Searching the web..."):
-                # Use Workflow with search_mode="web"
-                result = asyncio.run(
-                    run_workflow_async(
-                        workflow,
-                        st.session_state.last_query,
-                        mode="web",
-                        excluded_titles=list(st.session_state.shown_recipe_titles),
-                    )
-                )
-                raw_result = result.result if isinstance(result, StopEvent) else str(result)
-                web_recipes = normalize_recipes(parse_json_list(raw_result))
-
-                if web_recipes:
-                    existing_titles = {r.get("title") for r in st.session_state.candidate_recipes}
-                    unique_web = []
-                    for r in web_recipes:
-                        title = r.get("title")
-                        if title and title not in st.session_state.shown_recipe_titles and title not in existing_titles:
-                            r["source"] = "web"
-                            unique_web.append(r)
-                            st.session_state.shown_recipe_titles.add(title)
-
-                    if unique_web:
-                        st.session_state.all_recipes.extend(unique_web)
-                        st.success(f"Found {len(unique_web)} recipes from the web!")
-                        st.rerun()
-                    else:
-                        st.error("No new unique web recipes found.")
+                added = run_web_search(workflow, st.session_state.last_query)
+                if added:
+                    st.success(f"Found {added} recipes from the web!")
+                    st.rerun()
                 else:
                     st.error("Could not find relevant recipes online.")
 

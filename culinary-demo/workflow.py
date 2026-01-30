@@ -120,10 +120,13 @@ JUDGE_PROMPT = PromptTemplate(
     -------------------
 
     Instructions:
+    - A recipe must match the user's primary request (dish type, cuisine, or specific recipe name).
     - A recipe must satisfy all Requirements to be selected.
     - Reject any recipe that violates any Restrictions.
     - Exclude any recipe whose title matches the Excluded Recipe Titles.
-    - Select as many relevant recipes as possible, up to {max_results}.
+    - IMPORTANT: If no recipes match the user's request, return an empty array: [].
+    - It is better to return no results than to return irrelevant recipes.
+    - Select up to {max_results} genuinely relevant recipes.
     - Ensure each recipe title is unique.
     - Return a JSON array with objects: {"title": "exact title", "reason": "brief explanation"}.
     - Rank results by relevance (best first).
