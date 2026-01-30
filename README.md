@@ -8,7 +8,7 @@ This project is mainly for educational purposes, exploring the integration of RA
 
 ## Repository Structure
 - **Notebooks**: Contains initial experimental code for prototyping and testing concepts
-- **Main Components**: Located under `culinary_agent_backend` with an extensive README file detailing how to use the already working CLI implementation
+- **Main Components**: Located under `culinary-demo` with an extensive README file detailing how to use the already working CLI implementation
 
 ## Getting Started
-For instructions on how to use the current CLI implementation, please refer to the README file in the `culinary_agent_backend` directory.
+For instructions on how to use the current CLI implementation, please refer to the README file in the `culinary-demo` directory.
