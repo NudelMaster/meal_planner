@@ -1,12 +1,8 @@
-# Meal Planner
+# Meal Planner – Corrective RAG Agent
 
-A collection of AI-powered meal planning and recipe discovery projects.
+A corrective retrieval-augmented generation (RAG) system for meal planning that combines semantic search, LLM-based intent filtering, and web-search fallback to ensure relevant results.
 
-## Projects
-
-### [Culinary Demo – Corrective RAG Agent](./culinary-demo)
-
-A production-grade retrieval-augmented generation (RAG) system for recipe search with multi-stage LLM evaluation and automatic web fallback.
+The system implements a multi-stage pipeline: query optimization, intent analysis, semantic retrieval, relevance judging, and recipe adaptation. It integrates vector search, LLM reasoning, and an interactive Streamlit interface to provide an end-to-end ML-driven application.
 
 **Key Features:**
 - Intent-aware recipe retrieval using LlamaIndex workflows
@@ -15,7 +11,7 @@ A production-grade retrieval-augmented generation (RAG) system for recipe search
 - Interactive recipe adaptation with iterative refinement
 - Session management and search history
 
-**Tech Stack:** Pinecone, Cerebras Llama 3.3-70B, Google Embeddings, Tavily, Streamlit
+**Tech Stack:** Pinecone, Cerebras Llama , Google Embeddings, Tavily, Streamlit
 
 [View detailed documentation →](./culinary-demo/README.md)
 
