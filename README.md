@@ -4,12 +4,13 @@ A corrective retrieval-augmented generation (RAG) system for meal planning that 
 
 The system implements a multi-stage pipeline: query optimization, intent analysis, semantic retrieval, relevance judging, and recipe adaptation. It integrates vector search, LLM reasoning, and an interactive Streamlit interface to provide an end-to-end ML-driven application.
 
-**Key Features:**
-- Intent-aware recipe retrieval using LlamaIndex workflows
-- Multi-stage LLM pipeline (query optimization → intent analysis → relevance judging)
-- Hybrid search (Pinecone vector DB + Tavily web search)
-- Interactive recipe adaptation with iterative refinement
-- Session management and search history
+## What I Implemented
+- Multi-stage RAG workflow (optimize → retrieve → judge → adapt)
+- Intent-aware filtering using LLM-based requirement extraction
+- Hybrid retrieval: Pinecone vector search with web-search fallback
+- Session management with adaptation tracking and deduplication
+- Data ingestion pipeline for embedding and indexing recipes
+- Streamlit-based interactive chat interface
 
 **Tech Stack:** Pinecone, Cerebras Llama , Google Embeddings, Tavily, Streamlit
 
