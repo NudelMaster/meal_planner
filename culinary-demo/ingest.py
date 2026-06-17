@@ -4,7 +4,7 @@ import sys
 import time
 import warnings
 from pathlib import Path
-
+import torch
 # Fix: Filter out Google's gRPC warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module=r"google\..*")
 
@@ -137,13 +137,17 @@ def main():
         raise FileNotFoundError(f"Missing embeddings data: {EMBEDDINGS_PATH}")
     if not FULL_RECIPES_PATH.exists():
         raise FileNotFoundError(f"Missing full recipes data: {FULL_RECIPES_PATH}")
-
+    if torch.cuda.is_available():
+        print("Using GPU")
+    else:
+        print("Using CPU")
     # Initialize Embedding Model (local EmbeddingGemma — runs on-device, no API quota).
     embed_model = HuggingFaceEmbedding(
         model_name=EMBED_MODEL,
         query_instruction=EMBED_QUERY_INSTRUCTION,
         text_instruction=EMBED_TEXT_INSTRUCTION,
-        embed_batch_size=32,
+        embed_batch_size=256,
+        device="cuda",
     )
 
     # Probe dimension
