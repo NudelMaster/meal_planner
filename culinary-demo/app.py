@@ -12,10 +12,7 @@ from llama_index.core import VectorStoreIndex, StorageContext, Settings
 from llama_index.core.llms import LLM
 from llama_index.core.workflow import StopEvent
 from llama_index.vector_stores.pinecone import PineconeVectorStore
-try:
-    from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-except ImportError:
-    from llama_index.embeddings.google import GeminiEmbedding as GoogleGenAIEmbedding
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.cerebras import Cerebras
 from pinecone import Pinecone
 
@@ -23,6 +20,13 @@ from workflow import ADAPTATION_PROMPT, FINAL_RESPONSE_PROMPT, CorrectiveRAGWork
 
 # Load environment variables
 load_dotenv()
+
+EMBED_MODEL = "google/embeddinggemma-300m"
+EMBED_DIM = 768
+# EmbeddingGemma asymmetric prompts — MUST stay identical to ingest.py.
+EMBED_QUERY_INSTRUCTION = "task: search result | query: "
+EMBED_TEXT_INSTRUCTION = "title: none | text: "
+CEREBRAS_MODEL = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
 
 # Constants
 INDEX_NAME = "culinary-demo"
@@ -224,31 +228,24 @@ def initialize_resources():
     """Initialize DB connection and Models."""
     
     # Check API Keys
-    required_keys = ["GOOGLE_API_KEY", "PINECONE_API_KEY", "CEREBRAS_API_KEY", "TAVILY_API_KEY"]
+    required_keys = ["PINECONE_API_KEY", "CEREBRAS_API_KEY", "TAVILY_API_KEY"]
     missing = [k for k in required_keys if not os.getenv(k)]
     if missing:
         st.error(f"Missing API Keys: {', '.join(missing)}")
         st.stop()
 
-    # 1. Initialize Embeddings (Google)
-    try:
-        from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-        embed_model = GoogleGenAIEmbedding(
-            api_key=os.getenv("GOOGLE_API_KEY"),
-            model_name="models/text-embedding-004",
-        )
-    except ImportError:
-        from llama_index.embeddings.google import GeminiEmbedding as GoogleGenAIEmbedding
-        embed_model = GoogleGenAIEmbedding(
-            api_key=os.getenv("GOOGLE_API_KEY"),
-            model_name="models/text-embedding-004",
-        )
-    
+    # 1. Initialize Embeddings (local EmbeddingGemma — no API quota, must match ingest.py)
+    embed_model = HuggingFaceEmbedding(
+        model_name=EMBED_MODEL,
+        query_instruction=EMBED_QUERY_INSTRUCTION,
+        text_instruction=EMBED_TEXT_INSTRUCTION,
+    )
+
     Settings.embed_model = embed_model
 
-    # 2. Initialize LLM (Cerebras Llama 3.1-70b)
+    # 2. Initialize LLM (Cerebras)
     llm = Cerebras(
-        model="llama-3.3-70b",
+        model=CEREBRAS_MODEL,
         api_key=os.getenv("CEREBRAS_API_KEY"),
         # Adjust temperature as needed
         temperature=0.3
@@ -303,7 +300,7 @@ with st.sidebar:
 
 # Main Content
 st.title("🍳 AI Culinary Assistant")
-st.caption("Powered by Google Embeddings, Pinecone, Cerebras Llama 3.1, and Tavily")
+st.caption("Powered by Google Embeddings, Pinecone, Cerebras, and Tavily")
 
 # Custom CSS for Scrollable Container
 st.markdown("""
@@ -347,7 +344,7 @@ try:
         llm=llm,
         tavily_api_key=os.getenv("TAVILY_API_KEY"),
         verbose=True,
-        timeout=120
+        timeout=180
     )
 except Exception as e:
     st.error(f"Initialization Failed: {e}")

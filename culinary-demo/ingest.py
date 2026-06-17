@@ -1,5 +1,7 @@
 import json
 import os
+import sys
+import time
 import warnings
 from pathlib import Path
 
@@ -10,26 +12,22 @@ from dotenv.main import load_dotenv
 from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.ingestion import IngestionPipeline
-
-# Fix: Updated to latest Google GenAI SDK recommendation (llama-index-embeddings-google is wrapper)
-try:
-    from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-except ImportError:
-    # If explicit import fails, rely on standard package resolution which might have fixed namespace
-    try:
-        from llama_index.embeddings.google import GoogleGenAIEmbedding
-    except ImportError:
-        from llama_index.embeddings.google import GeminiEmbedding as GoogleGenAIEmbedding
-
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
 
 PROJECT_ROOT = Path(__file__).resolve().parent
-DATA_DIR = PROJECT_ROOT.parent / "culinary_agent" / "data" / "recipes"
+DATA_DIR = PROJECT_ROOT / "data"
 EMBEDDINGS_PATH = DATA_DIR / "recipes_for_embeddings.jsonl"
 FULL_RECIPES_PATH = DATA_DIR / "full_format_recipes.json"
 
 INDEX_NAME = "culinary-demo"
+EMBED_MODEL = "google/embeddinggemma-300m"
+EMBED_DIM = 768
+# EmbeddingGemma uses asymmetric prompts: documents and queries get different
+# instruction prefixes. These MUST stay identical to app.py or retrieval breaks.
+EMBED_QUERY_INSTRUCTION = "task: search result | query: "
+EMBED_TEXT_INSTRUCTION = "title: none | text: "
 PINECONE_CLOUD = "aws"
 PINECONE_REGION = "us-east-1"
 
@@ -133,7 +131,6 @@ def _ensure_index(client, dimension):
 def main():
     load_dotenv()
 
-    google_api_key = _require_env("GOOGLE_API_KEY")
     pinecone_api_key = _require_env("PINECONE_API_KEY")
 
     if not EMBEDDINGS_PATH.exists():
@@ -141,26 +138,13 @@ def main():
     if not FULL_RECIPES_PATH.exists():
         raise FileNotFoundError(f"Missing full recipes data: {FULL_RECIPES_PATH}")
 
-    # Initialize Embedding Model
-    try:
-        from llama_index.embeddings.google_genai import GoogleGenAIEmbedding
-        embed_model = GoogleGenAIEmbedding(
-            api_key=google_api_key,
-            model_name="models/text-embedding-004",
-            # Optimization: Try to increase batch size for embedding requests if supported
-            embed_batch_size=100, 
-        )
-    except ImportError:
-        try:
-            from llama_index.embeddings.google import GoogleGenAIEmbedding
-        except ImportError:
-            from llama_index.embeddings.google import GeminiEmbedding as GoogleGenAIEmbedding
-            
-        embed_model = GoogleGenAIEmbedding(
-            api_key=google_api_key,
-            model_name="models/text-embedding-004",
-            embed_batch_size=100,
-        )
+    # Initialize Embedding Model (local EmbeddingGemma — runs on-device, no API quota).
+    embed_model = HuggingFaceEmbedding(
+        model_name=EMBED_MODEL,
+        query_instruction=EMBED_QUERY_INSTRUCTION,
+        text_instruction=EMBED_TEXT_INSTRUCTION,
+        embed_batch_size=32,
+    )
 
     # Probe dimension
     dimension = len(embed_model.get_text_embedding("test"))
@@ -183,12 +167,29 @@ def main():
     client = Pinecone(api_key=pinecone_api_key)
     _ensure_index(client, dimension)
 
+    force = "--force" in sys.argv or os.getenv("FORCE_REINGEST", "").lower() in ("1", "true", "yes")
+
     index = client.Index(INDEX_NAME)
     stats = index.describe_index_stats()
     if stats.total_vector_count > 0:
-        print(f"⚠️ Index '{INDEX_NAME}' already contains {stats.total_vector_count} vectors.")
-        print("Skipping ingestion to prevent overwriting. To force update, delete the index from Pinecone console.")
-        return
+        if not force:
+            print(f"⚠️ Index '{INDEX_NAME}' already contains {stats.total_vector_count} vectors.")
+            print(
+                "Skipping ingestion to prevent overwriting. Re-run with --force to wipe and re-ingest "
+                "(required after changing the embedding model, so query and document vectors come "
+                "from the same model)."
+            )
+            return
+        print(
+            f"--force set: clearing {stats.total_vector_count} stale vectors from '{INDEX_NAME}' "
+            f"before re-ingesting with {EMBED_MODEL}..."
+        )
+        index.delete(delete_all=True)
+        # Bulk delete is eventually consistent; wait until the index reports empty.
+        for _ in range(60):
+            if index.describe_index_stats().total_vector_count == 0:
+                break
+            time.sleep(1)
     vector_store = PineconeVectorStore(pinecone_index=index)
     storage_context = StorageContext.from_defaults(vector_store=vector_store)
 

@@ -1,6 +1,9 @@
+import asyncio
 import json
 import os
+import time
 from typing import Any, Dict, List, Optional
+
 from llama_index.core.workflow import (
     Event,
     StartEvent,
@@ -13,6 +16,11 @@ from llama_index.core.schema import NodeWithScore
 from llama_index.core.prompts import PromptTemplate
 from llama_index.core.llms import LLM
 from tavily import TavilyClient
+
+# Find ~10 recipes via RAG, judge ranks them, UI surfaces the top 3 (rest held in reserve).
+RETRIEVE_TOP_K = 15  # fetch a small buffer above 10 so dedup still leaves ~10 to judge
+JUDGE_TOP_K = 10
+MAX_EXCERPT_SECTION_CHARS = 250
 
 # --- Events ---
 
@@ -206,6 +214,33 @@ class CorrectiveRAGWorkflow(Workflow):
         await ctx.store.set("llm_call_count", count)
         print(f"DEBUG: LLM call {count} - {label}")
 
+    async def _llm_complete(
+        self,
+        ctx: Context,
+        label: str,
+        prompt: str,
+        timeout: Optional[float] = None,
+    ):
+        """Run an LLM call with timing and prompt-size logging."""
+        await self._increment_llm_calls(ctx, label)
+        print(f"DEBUG: {label} prompt size: {len(prompt):,} chars")
+        started = time.perf_counter()
+        coro = self.llm.acomplete(prompt)
+        if timeout:
+            response = await asyncio.wait_for(coro, timeout=timeout)
+        else:
+            response = await coro
+        elapsed = time.perf_counter() - started
+        print(f"DEBUG: {label} finished in {elapsed:.1f}s")
+        return response
+
+    @staticmethod
+    def _truncate_text(text: str, max_chars: int) -> str:
+        text = text.strip()
+        if len(text) <= max_chars:
+            return text
+        return text[: max_chars - 3].rstrip() + "..."
+
     def _parse_json_object(self, text: str) -> Dict[str, Any]:
         """Parse a JSON object from LLM output."""
         try:
@@ -271,7 +306,14 @@ class CorrectiveRAGWorkflow(Workflow):
         ]
         return "\n".join(time_lines[:5])
 
-    def _build_candidate_excerpt(self, title: str, recipe_text: str, intent: Dict[str, Any]) -> str:
+    def _build_candidate_excerpt(
+        self,
+        title: str,
+        recipe_text: str,
+        intent: Dict[str, Any],
+        *,
+        for_judge: bool = False,
+    ) -> str:
         """Build a concise excerpt for judging based on intent."""
         evaluation_focus = str(intent.get("evaluation_focus", "")).lower()
         requirements = json.dumps(intent.get("requirements", []), ensure_ascii=True).lower()
@@ -301,21 +343,24 @@ class CorrectiveRAGWorkflow(Workflow):
 
         if include_ingredients:
             ingredients_section = self._extract_section(recipe_text, ["ingredients"]) or "Not specified"
+            ingredients_section = self._truncate_text(ingredients_section, MAX_EXCERPT_SECTION_CHARS)
             parts.append(f"Ingredients:\n{ingredients_section}")
 
         if include_time:
             time_section = self._extract_time_lines(recipe_text) or "Not specified"
+            time_section = self._truncate_text(time_section, 120)
             parts.append(f"Time:\n{time_section}")
 
-        if include_directions:
+        if include_directions and not for_judge:
             directions_section = (
                 self._extract_section(recipe_text, ["directions", "instructions", "method", "steps"])
                 or "Not specified"
             )
+            directions_section = self._truncate_text(directions_section, MAX_EXCERPT_SECTION_CHARS)
             parts.append(f"Directions:\n{directions_section}")
 
         if len(parts) == 1:
-            parts.append(recipe_text[:800])
+            parts.append(self._truncate_text(recipe_text, MAX_EXCERPT_SECTION_CHARS))
 
         return "\n\n".join(parts)
 
@@ -335,17 +380,32 @@ class CorrectiveRAGWorkflow(Workflow):
         await ctx.store.set("user_query", user_query)
         await ctx.store.set("excluded_titles", excluded_titles)
 
-        prompt = QUERY_OPTIMIZER_PROMPT.format(user_query=user_query)
-        await self._increment_llm_calls(ctx, "query_optimizer")
-        response = await self.llm.acomplete(prompt)
-        optimized_query = response.text.strip()
-        
+        # Intent analysis only needs the raw user query, so run it concurrently with the
+        # query optimizer instead of after retrieval. This hides a full LLM round-trip
+        # under the optimize+retrieve latency (eval_relevance/web_search reuse it from ctx).
+        optimizer_prompt = QUERY_OPTIMIZER_PROMPT.format(user_query=user_query)
+        intent_prompt = INTENT_ANALYZER_PROMPT.format(user_query=user_query)
+        optimizer_response, intent_response = await asyncio.gather(
+            self._llm_complete(ctx, "query_optimizer", optimizer_prompt),
+            self._llm_complete(ctx, "intent_analyzer", intent_prompt),
+        )
+        optimized_query = optimizer_response.text.strip()
+
+        intent = self._parse_json_object(intent_response.text)
+        if not intent:
+            intent = {
+                "primary_goal": user_query,
+                "requirements": [],
+                "restrictions": [],
+                "evaluation_focus": "ingredients",
+            }
+        await ctx.store.set("intent_analysis", intent)
+
         print(f"DEBUG: Optimized Query: '{optimized_query}' (Mode: {search_mode})")
-        
+
         if search_mode == "web":
             return WebSearchEvent(query=optimized_query)
-        else:
-            return OptimizeQueryEvent(optimized_query=optimized_query)
+        return OptimizeQueryEvent(optimized_query=optimized_query)
 
     @step
     async def web_search(self, ctx: Context, ev: WebSearchEvent) -> StopEvent:
@@ -445,7 +505,7 @@ class CorrectiveRAGWorkflow(Workflow):
 
         # Create retriever from the index
         # Fetch more to enable pagination in the UI
-        retriever = self.index.as_retriever(similarity_top_k=30)
+        retriever = self.index.as_retriever(similarity_top_k=RETRIEVE_TOP_K)
         nodes = retriever.retrieve(optimized_query)
         
         print(f"DEBUG: Retrieved {len(nodes)} nodes from Pinecone.")
@@ -463,7 +523,7 @@ class CorrectiveRAGWorkflow(Workflow):
         if not retrieved_nodes:
             return QueryEvent(context_str="No matching recipes found.")
 
-        # Deduplicate by title and build map for full content
+        # Deduplicate by title and build map for full content (retrieval order = relevance)
         node_map: Dict[str, str] = {}
         candidates: List[Dict[str, str]] = []
         for node in retrieved_nodes:
@@ -473,29 +533,29 @@ class CorrectiveRAGWorkflow(Workflow):
             node_map[title] = node.text
             candidates.append({"title": title, "recipe_text": node.text})
 
-        # Intent analysis to determine evaluation focus
-        intent_prompt = INTENT_ANALYZER_PROMPT.format(user_query=user_query)
-        await self._increment_llm_calls(ctx, "intent_analyzer")
-        intent_response = await self.llm.acomplete(intent_prompt)
-        intent = self._parse_json_object(intent_response.text)
-        if not intent:
+        judge_candidates = candidates[:JUDGE_TOP_K]
+        print(f"DEBUG: Judging top {len(judge_candidates)} of {len(candidates)} candidates.")
+
+        # Intent was already computed concurrently in optimize_query; reuse it.
+        intent = await ctx.store.get("intent_analysis", None)
+        if not isinstance(intent, dict) or not intent:
             intent = {
                 "primary_goal": user_query,
                 "requirements": [],
                 "restrictions": [],
-                "evaluation_focus": "ingredients and directions"
+                "evaluation_focus": "ingredients",
             }
-        await ctx.store.set("intent_analysis", intent)
 
-        # Build candidate excerpts based on intent
         candidates_str = ""
-        for i, recipe in enumerate(candidates, 1):
-            excerpt = self._build_candidate_excerpt(recipe["title"], recipe["recipe_text"], intent)
+        for i, recipe in enumerate(judge_candidates, 1):
+            excerpt = self._build_candidate_excerpt(
+                recipe["title"], recipe["recipe_text"], intent, for_judge=True
+            )
             candidates_str += f"Recipe {i}:\n{excerpt}\n\n"
 
         excluded_list = [str(title).strip() for title in excluded_titles if str(title).strip()]
         excluded_titles_str = "\n".join(f"- {title}" for title in excluded_list) or "None"
-        max_results = min(len(candidates), 30)
+        max_results = min(len(judge_candidates), 10)
         requirements_str = json.dumps(intent.get("requirements", []), indent=2)
         restrictions_str = json.dumps(intent.get("restrictions", []), indent=2)
         evaluation_focus = str(intent.get("evaluation_focus", "general match"))
@@ -510,8 +570,7 @@ class CorrectiveRAGWorkflow(Workflow):
             max_results=max_results,
         )
 
-        await self._increment_llm_calls(ctx, "judge_candidates")
-        response = await self.llm.acomplete(prompt)
+        response = await self._llm_complete(ctx, "judge_candidates", prompt)
         selections = self._parse_json_list(response.text.strip())
 
         # Assemble full content for selected recipes
