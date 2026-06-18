@@ -1,10 +1,12 @@
-import subprocess
 import os
+import subprocess
+
+from embed_device import configure_cuda_before_torch
 
 if __name__ == "__main__":
     print("Starting Streamlit App...")
-    # Use array for command to avoid shell injection, though purely local here
+    configure_cuda_before_torch()
     try:
-        subprocess.run(["streamlit", "run", "app.py"], check=True)
+        subprocess.run(["streamlit", "run", "app.py"], check=True, env=os.environ)
     except KeyboardInterrupt:
         print("\nStopping server...")

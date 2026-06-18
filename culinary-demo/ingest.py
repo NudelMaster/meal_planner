@@ -4,7 +4,6 @@ import sys
 import time
 import warnings
 from pathlib import Path
-import torch
 # Fix: Filter out Google's gRPC warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module=r"google\..*")
 
@@ -14,6 +13,8 @@ from llama_index.core.node_parser import SentenceSplitter
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
+
+from embed_device import configure_cuda_before_torch, select_embed_device
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DATA_DIR = PROJECT_ROOT / "data"
@@ -129,6 +130,7 @@ def _ensure_index(client, dimension):
 
 def main():
     load_dotenv()
+    configure_cuda_before_torch()
 
     pinecone_api_key = _require_env("PINECONE_API_KEY")
 
@@ -136,17 +138,14 @@ def main():
         raise FileNotFoundError(f"Missing embeddings data: {EMBEDDINGS_PATH}")
     if not FULL_RECIPES_PATH.exists():
         raise FileNotFoundError(f"Missing full recipes data: {FULL_RECIPES_PATH}")
-    if torch.cuda.is_available():
-        print("Using GPU")
-    else:
-        print("Using CPU")
     # Initialize Embedding Model (local EmbeddingGemma — runs on-device, no API quota).
+    embed_device = select_embed_device()
     embed_model = HuggingFaceEmbedding(
         model_name=EMBED_MODEL,
         query_instruction=EMBED_QUERY_INSTRUCTION,
         text_instruction=EMBED_TEXT_INSTRUCTION,
         embed_batch_size=256,
-        device="cuda",
+        device=embed_device,
     )
 
     # Probe dimension

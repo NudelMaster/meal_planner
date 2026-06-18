@@ -12,7 +12,7 @@ The pipeline implements a **corrective RAG workflow** with intent-aware filterin
 
 1. **Query Optimization** – LLM expands user query into keyword-rich search terms (e.g., "high protein" → "chicken beans tofu fish")
 2. **Intent Analysis** – LLM extracts requirements, restrictions, and evaluation focus from user request
-3. **Semantic Retrieval** – Google embeddings convert optimized query to vector; Pinecone returns top-k similar recipes (top-30 candidates)
+3. **Semantic Retrieval** – Local EmbeddingGemma converts the optimized query to a vector; Pinecone returns the top-k similar recipes (top-15 candidates)
 4. **Relevance Judging** – LLM evaluates candidates against intent analysis, selecting only recipes that match requirements and avoid restrictions
 5. **Fallback Logic** – If no matches found or user requests more, trigger Tavily web search
 6. **Recipe Formatting & Adaptation** – LLM formats selected recipes and generates adaptation options based on user goals
@@ -30,9 +30,9 @@ The pipeline implements a **corrective RAG workflow** with intent-aware filterin
 
 | Component | Technology | Role |
 |-----------|-----------|------|
-| **Embeddings** | Google Generative AI (Gemini `text-embedding-004`) | Semantic search encoding |
+| **Embeddings** | Local EmbeddingGemma (`google/embeddinggemma-300m`, 768-dim, via HuggingFace) | Semantic search encoding — runs on-device, no API quota |
 | **Vector DB** | Pinecone (Serverless) | Recipe index and retrieval |
-| **LLM** | Cerebras Llama 3.3-70B | Query optimization, intent analysis, relevance judging, formatting |
+| **LLM** | Cerebras (default `gpt-oss-120b`, set via `CEREBRAS_MODEL`) | Query optimization, intent analysis, relevance judging, formatting |
 | **Web Search** | Tavily API | Fallback retrieval |
 | **Frontend** | Streamlit | Chat interface |
 | **Orchestration** | LlamaIndex Workflows | Multi-step agent pipeline |
@@ -67,20 +67,21 @@ pip install -r requirements.txt
 ```
 
 ### 2. Configure API Keys
-Create a `.env` file in the project root:
+Create a `.env` file in the project root (see `.env.example`):
 ```env
-GOOGLE_API_KEY=your_google_api_key
 PINECONE_API_KEY=your_pinecone_key
 CEREBRAS_API_KEY=your_cerebras_key
+CEREBRAS_MODEL=gpt-oss-120b
 TAVILY_API_KEY=your_tavily_key
 ```
+Embeddings run locally (EmbeddingGemma), so no Google/OpenAI key is required. A CUDA GPU is needed — set `CUDA_VISIBLE_DEVICES` to a free device.
 
 ### 3. Ingest Recipe Data
 Populate the Pinecone index (run once):
 ```bash
-python ingest.py
+CUDA_VISIBLE_DEVICES=1 python ingest.py
 ```
-**Note**: Ingestion loads recipes from `../culinary_agent/data/recipes/` (requires recipe dataset)
+**Note**: Ingestion reads `data/recipes_for_embeddings.jsonl` and `data/full_format_recipes.json`, embeds them locally on GPU, and upserts into the `culinary-demo` index. It skips if the index is already populated — re-run with `--force` to wipe and re-ingest (required after changing the embedding model).
 
 ## Running the Demo
 
@@ -98,7 +99,7 @@ Access the chat interface at **http://localhost:8501**
 **System**:
 1. **Query Optimizer**: "high-protein breakfast under 400 calories" → "chicken eggs tofu beans breakfast protein low-calorie"
 2. **Intent Analyzer**: Extracts requirements (high protein, <400 cal) and evaluation focus (ingredients, nutritional info)
-3. **Pinecone Retrieval**: Returns 30 candidate recipes via semantic search
+3. **Pinecone Retrieval**: Returns up to 15 candidate recipes via semantic search
 4. **Relevance Judge**: Evaluates candidates against requirements, selects top matches
 5. **Response**: Returns JSON array of matching recipes with title, full text, and match reason
 
@@ -132,7 +133,7 @@ Access the chat interface at **http://localhost:8501**
 
 ### Step 2a: `retrieve` (DB mode)
 - Input: Optimized query
-- Action: Pinecone similarity search (top-30)
+- Action: Pinecone similarity search (top-15; `RETRIEVE_TOP_K`), then dedup and judge up to 10 (`JUDGE_TOP_K`)
 - Output: Retrieved nodes
 
 ### Step 2b: `web_search` (Web mode)
@@ -164,13 +165,12 @@ Access the chat interface at **http://localhost:8501**
 
 Monitor usage via provider dashboards to stay within plan limits:
 
-- **Google AI Studio (Embeddings)**: Model-specific limits (requests/min, tokens/min).  
-  [Docs](https://ai.google.dev/gemini-api/docs/rate-limits) | [Dashboard](https://aistudio.google.com)
+- **Embeddings (EmbeddingGemma)**: Runs locally on GPU — no API quota or rate limit. Only constraint is GPU memory/throughput.
 
 - **Pinecone (Vector DB)**: Serverless limits – 100 req/s per namespace, 2,000 query read units/s per index.  
   [Docs](https://docs.pinecone.io/docs/limits) | [Dashboard](https://app.pinecone.io)
 
-- **Cerebras (LLM Inference)**: Account/plan-specific quotas. **Note**: This project uses Llama 3.3-70B (not 3.1-70B as originally stated).  
+- **Cerebras (LLM Inference)**: Account/plan-specific quotas. Default model is `gpt-oss-120b` (override with `CEREBRAS_MODEL`).  
   [Docs](https://docs.cerebras.ai) | [Dashboard](https://cloud.cerebras.ai)
 
 - **Tavily (Web Search)**: 100 RPM (dev keys), 1,000 RPM (production keys).  

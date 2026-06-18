@@ -1,12 +1,21 @@
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# Pin to a free GPU before any library imports torch and touches cuda:0.
+from embed_device import configure_cuda_before_torch
+
+configure_cuda_before_torch()
+
 import asyncio
 import json
-import os
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
 import streamlit.components.v1 as components
-from dotenv import load_dotenv
 from llama_index.core import VectorStoreIndex, Settings
 from llama_index.core.llms import LLM
 from llama_index.core.workflow import StopEvent
@@ -15,10 +24,8 @@ from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.cerebras import Cerebras
 from pinecone import Pinecone
 
+from embed_device import is_cuda_oom, select_embed_device
 from workflow import ADAPTATION_PROMPT, FINAL_RESPONSE_PROMPT, CorrectiveRAGWorkflow
-
-# Load environment variables
-load_dotenv()
 
 EMBED_MODEL = "google/embeddinggemma-300m"
 EMBED_DIM = 768
@@ -235,14 +242,31 @@ def initialize_resources():
 
     # 1. Initialize Embeddings (local EmbeddingGemma — no API quota).
     # model_name + the asymmetric instructions MUST match ingest.py or retrieval breaks.
-    # Runs on GPU (set CUDA_VISIBLE_DEVICES); the query embedding must use the same model
-    # that produced the document vectors.
-    embed_model = HuggingFaceEmbedding(
-        model_name=EMBED_MODEL,
-        query_instruction=EMBED_QUERY_INSTRUCTION,
-        text_instruction=EMBED_TEXT_INSTRUCTION,
-        device="cuda",
-    )
+    # configure_cuda_before_torch() already hid busy GPUs; retry on CPU if load still OOMs.
+    def _create_embed_model(device: str) -> HuggingFaceEmbedding:
+        if device.startswith("cuda"):
+            import torch
+
+            device_index = 0 if device == "cuda" else int(device.split(":", 1)[1])
+            torch.cuda.set_device(device_index)
+            torch.cuda.empty_cache()
+        return HuggingFaceEmbedding(
+            model_name=EMBED_MODEL,
+            query_instruction=EMBED_QUERY_INSTRUCTION,
+            text_instruction=EMBED_TEXT_INSTRUCTION,
+            device=device,
+        )
+
+    embed_device = select_embed_device()
+    try:
+        embed_model = _create_embed_model(embed_device)
+    except RuntimeError as exc:
+        if embed_device != "cpu" and is_cuda_oom(exc):
+            print(f"GPU load failed on {embed_device} ({exc}); retrying on CPU")
+            embed_device = "cpu"
+            embed_model = _create_embed_model(embed_device)
+        else:
+            raise
 
     Settings.embed_model = embed_model
 
