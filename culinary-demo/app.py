@@ -4,6 +4,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+_hf_token = os.getenv("HF_TOKEN") or os.getenv("HUGGING_FACE_HUB_TOKEN")
+if _hf_token:
+    from huggingface_hub import login
+
+    login(token=_hf_token, add_to_git_credential=False)
+
 # Pin to a free GPU before any library imports torch and touches cuda:0.
 from embed_device import configure_cuda_before_torch
 
