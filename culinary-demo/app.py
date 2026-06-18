@@ -7,8 +7,7 @@ from typing import Any, Dict, List, Optional
 import streamlit as st
 import streamlit.components.v1 as components
 from dotenv import load_dotenv
-from tavily import TavilyClient
-from llama_index.core import VectorStoreIndex, StorageContext, Settings
+from llama_index.core import VectorStoreIndex, Settings
 from llama_index.core.llms import LLM
 from llama_index.core.workflow import StopEvent
 from llama_index.vector_stores.pinecone import PineconeVectorStore
@@ -224,31 +223,44 @@ def reset_search_state() -> None:
     st.session_state.no_db_results = False
 
 # --- Resource Loading ---
+@st.cache_resource(show_spinner="Loading embedding model and connecting to Pinecone...")
 def initialize_resources():
-    """Initialize DB connection and Models."""
-    
-    # Check API Keys
-    required_keys = ["PINECONE_API_KEY", "CEREBRAS_API_KEY", "TAVILY_API_KEY"]
-    missing = [k for k in required_keys if not os.getenv(k)]
-    if missing:
-        st.error(f"Missing API Keys: {', '.join(missing)}")
-        st.stop()
+    """Initialize DB connection and Models.
 
-    # 1. Initialize Embeddings (local EmbeddingGemma — no API quota, must match ingest.py)
+    Cached with @st.cache_resource so the EmbeddingGemma model is loaded exactly
+    once per process and reused across reruns. Without this, every Streamlit rerun
+    (e.g. selecting a recipe) reloads the model; reloading with device="cuda" leaves
+    weights on the meta device and fails with "Cannot copy out of meta tensor".
+    """
+
+    # 1. Initialize Embeddings (local EmbeddingGemma — no API quota).
+    # model_name + the asymmetric instructions MUST match ingest.py or retrieval breaks.
+    # Runs on GPU (set CUDA_VISIBLE_DEVICES); the query embedding must use the same model
+    # that produced the document vectors.
     embed_model = HuggingFaceEmbedding(
         model_name=EMBED_MODEL,
         query_instruction=EMBED_QUERY_INSTRUCTION,
         text_instruction=EMBED_TEXT_INSTRUCTION,
+        device="cuda",
     )
 
     Settings.embed_model = embed_model
 
     # 2. Initialize LLM (Cerebras)
+    # gpt-oss models reason before answering. Without bounds, open-ended prompts
+    # (e.g. the query optimizer) can spend 60s+ generating hidden reasoning tokens,
+    # so cap reasoning effort. reasoning_effort only applies to gpt-oss models, so
+    # only send it for those to avoid an "unknown parameter" error on other models.
+    extra_kwargs: Dict[str, Any] = {}
+    if "gpt-oss" in CEREBRAS_MODEL.lower():
+        extra_kwargs["reasoning_effort"] = "low"
     llm = Cerebras(
         model=CEREBRAS_MODEL,
         api_key=os.getenv("CEREBRAS_API_KEY"),
         # Adjust temperature as needed
-        temperature=0.3
+        temperature=0.3,
+        max_tokens=4096,
+        additional_kwargs=extra_kwargs,
     )
     Settings.llm = llm
 
@@ -280,7 +292,10 @@ with st.sidebar:
     st.markdown("---")
     
     if st.button("➕ New Session", use_container_width=True):
-        save_current_session()
+        # Only snapshot genuinely new work. A session loaded from history
+        # (viewing_history_mode) is already saved — re-saving duplicates it.
+        if not st.session_state.viewing_history_mode:
+            save_current_session()
         clear_current_session()
         st.rerun()
         
@@ -300,7 +315,7 @@ with st.sidebar:
 
 # Main Content
 st.title("🍳 AI Culinary Assistant")
-st.caption("Powered by Google Embeddings, Pinecone, Cerebras, and Tavily")
+st.caption("Powered by local EmbeddingGemma, Pinecone, Cerebras, and Tavily")
 
 # Custom CSS for Scrollable Container
 st.markdown("""
@@ -336,6 +351,13 @@ st.markdown("""
     }
 </style>
 """, unsafe_allow_html=True)
+
+# Check API keys every run (outside the cached resource so a missing key is always caught).
+required_keys = ["PINECONE_API_KEY", "CEREBRAS_API_KEY", "TAVILY_API_KEY"]
+missing_keys = [k for k in required_keys if not os.getenv(k)]
+if missing_keys:
+    st.error(f"Missing API Keys: {', '.join(missing_keys)}")
+    st.stop()
 
 try:
     index, llm = initialize_resources()
@@ -392,6 +414,38 @@ def as_string_list(value: Any) -> List[str]:
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
+
+
+# Recipe text is stored with single-newline separators (see ingest.py). Markdown
+# collapses single newlines, so "Directions:" glues onto the last ingredient bullet
+# and direction steps run together. Normalize to proper Markdown for display.
+_RECIPE_SECTION_HEADERS = (
+    "title:", "categories:", "ingredients:", "directions:",
+    "instructions:", "method:", "steps:", "summary:",
+)
+
+
+def render_recipe_text(text: str) -> str:
+    """Convert stored single-newline recipe text into well-formed Markdown."""
+    out: List[str] = []
+    for raw in (text or "").split("\n"):
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped:
+            if out and out[-1] != "":
+                out.append("")
+            continue
+        if any(stripped.lower().startswith(h) for h in _RECIPE_SECTION_HEADERS):
+            # Blank line before a header so it never continues the previous list/line,
+            # bold it, and blank line after so the following list/steps start fresh.
+            if out and out[-1] != "":
+                out.append("")
+            out.append(f"**{stripped}**")
+            out.append("")
+        else:
+            # Trailing two spaces = Markdown hard break, so each item/step keeps its line.
+            out.append(f"{line}  ")
+    return "\n".join(out).strip()
 
 
 def run_web_search(workflow: CorrectiveRAGWorkflow, query: str) -> int:
@@ -464,7 +518,7 @@ async def generate_adaptations(
     return response.text.strip()
 
 # Handle User Input
-if prompt := st.chat_input("Ask for a recipe or cooking tip..."):
+if prompt := st.chat_input("Ask for a recipe"):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -559,7 +613,7 @@ if st.session_state.all_recipes:
                 st.caption(snippet)
                 if recipe_text:
                     with st.expander("View full recipe"):
-                        st.markdown(recipe_text)
+                        st.markdown(render_recipe_text(recipe_text))
                 if st.button(f"Select Option {idx + 1}", key=f"select_recipe_{idx}", use_container_width=True):
                     st.session_state.selected_recipe_index = idx
                     st.session_state.selected_recipe = recipe
@@ -620,12 +674,20 @@ if st.session_state.current_recipe:
     
     # Show raw text in expander to keep UI clean
     with st.expander("View Raw Recipe Text", expanded=True):
-        st.markdown(active_text)
+        st.markdown(render_recipe_text(active_text))
 
     # Formatting Section
     if st.button("✨ Format this recipe", key="fmt_btn"):
         with st.spinner("Formatting recipe..."):
             user_query = st.session_state.last_query or ""
+            # If this recipe was adapted, tell the formatter so it presents the
+            # adapted version, not the original request. Otherwise the original
+            # query drags it back to the un-adapted recipe.
+            adapt_goals = [
+                h["goal"] for h in st.session_state.adaptation_history if h.get("goal")
+            ]
+            if adapt_goals:
+                user_query = f"{user_query} (adapted: {'; '.join(adapt_goals)})"
             try:
                 formatted = asyncio.run(
                     asyncio.wait_for(
@@ -671,17 +733,40 @@ if st.session_state.current_recipe:
                 user_query = st.session_state.last_query or ""
                 # ALWAYS adapt the CURRENT recipe (whether original or already adapted)
                 recipe_text_to_adapt = st.session_state.current_recipe.get("recipe_text", "")
-                
-                raw = asyncio.run(
-                    generate_adaptations(
-                        llm,
-                        user_query,
-                        recipe_text_to_adapt,
-                        st.session_state.adaptation_goal,
+
+                try:
+                    raw = asyncio.run(
+                        generate_adaptations(
+                            llm,
+                            user_query,
+                            recipe_text_to_adapt,
+                            st.session_state.adaptation_goal,
+                        )
                     )
-                )
-                st.session_state.adaptation_options = parse_json_list(raw)
+                    st.session_state.adaptation_options = parse_json_list(raw)
+                except Exception as e:
+                    # e.g. a transient Cerebras 429. Don't crash — fall through to the
+                    # web fallback below, which is keyed off "goal set but no options".
+                    st.session_state.adaptation_options = []
+                    st.error(f"Adaptation failed: {e}")
                 scroll_to_bottom()
+
+    # Web fallback for adaptation: if no options were produced for the requested change,
+    # search the web for the CHOSEN RECIPE + the change (e.g. "Overnight Oats replace
+    # protein powder"), not the original search query.
+    if st.session_state.adaptation_goal and not st.session_state.adaptation_options:
+        st.caption("No adaptations generated for this recipe.")
+        if st.button("🌐 Search online for this recipe + change", key="adapt_web_fallback"):
+            recipe_title = (st.session_state.current_recipe or {}).get("title", "").strip()
+            goal = st.session_state.adaptation_goal.strip()
+            web_query = " ".join(part for part in (recipe_title, goal) if part)
+            with st.spinner("Searching the web..."):
+                added = run_web_search(workflow, web_query)
+            if added:
+                st.success(f"Found {added} recipes from the web!")
+                st.rerun()
+            else:
+                st.error("Could not find relevant recipes online.")
 
 # Adaptation Options Display
 if st.session_state.adaptation_options:

@@ -2,7 +2,7 @@ import asyncio
 import json
 import os
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from llama_index.core.workflow import (
     Event,
@@ -92,6 +92,12 @@ INTENT_ANALYZER_PROMPT = PromptTemplate(
         "evaluation_focus": "describe what recipe sections matter and why"
     }}
 
+    Rules:
+    - Only include requirements and restrictions that the user EXPLICITLY stated, or that are inseparable from the request itself. Do NOT invent time limits, carb/calorie caps, allergen avoidances (nuts/gluten/dairy), or other dietary restrictions the user did not mention.
+    - If the user stated no restrictions, return an empty "restrictions" list ([]). Do not add "avoid X if not specified" style guesses — a downstream judge treats every restriction as mandatory and will wrongly reject valid recipes.
+    - Keep "requirements" to the core attribute(s) asked for (e.g., "high protein chicken" -> high protein AND chicken, nothing else).
+    - The examples below map ONE explicit phrase to ONE entry; do not generalize beyond the words the user used.
+
     Examples:
     - "high protein" -> {"attribute": "protein", "qualifier": "high", "look_for": "meat, fish, eggs, legumes, tofu"}
     - "low carb" -> {"attribute": "carbs", "qualifier": "low", "avoid": "pasta, rice, bread, potatoes, sugar"}
@@ -152,10 +158,11 @@ FINAL_RESPONSE_PROMPT = PromptTemplate(
     User Request: "{user_query}"
 
     Instructions:
-    - For each recipe, provide the Title (in bold), a one-sentence summary of why it fits their request, the Ingredients list, and Directions.
+    - Present ONLY the recipe exactly as given above. Use its EXACT ingredients and directions.
+    - Do NOT add, remove, or substitute ingredients or steps. In particular, if the recipe has been adapted away from the original request, do NOT reintroduce ingredients the request mentions but the recipe no longer contains (e.g. keep a vegan adaptation vegan — do not add back chicken).
+    - For each recipe, provide the Title (in bold), a one-sentence summary of the dish, the Ingredients list, and Directions.
     - Format it beautifully using Markdown.
     - Do NOT invent nutritional values.
-    - If the user asked for something specific (e.g., "no pepper") and you selected a recipe, ensure you mention if it's a good fit or if they need to omit an ingredient.
 
     Response:"""
 )
@@ -365,7 +372,7 @@ class CorrectiveRAGWorkflow(Workflow):
         return "\n\n".join(parts)
 
     @step
-    async def optimize_query(self, ctx: Context, ev: StartEvent) -> OptimizeQueryEvent | WebSearchEvent:
+    async def optimize_query(self, ctx: Context, ev: StartEvent) -> Union[OptimizeQueryEvent, WebSearchEvent]:
         """Translate user intent into a keyword-rich search query."""
         user_query = ev.get("query_str")
         search_mode = ev.get("search_mode", "db") # "db" or "web"
@@ -380,31 +387,39 @@ class CorrectiveRAGWorkflow(Workflow):
         await ctx.store.set("user_query", user_query)
         await ctx.store.set("excluded_titles", excluded_titles)
 
-        # Intent analysis only needs the raw user query, so run it concurrently with the
-        # query optimizer instead of after retrieval. This hides a full LLM round-trip
-        # under the optimize+retrieve latency (eval_relevance/web_search reuse it from ctx).
-        optimizer_prompt = QUERY_OPTIMIZER_PROMPT.format(user_query=user_query)
+        default_intent = {
+            "primary_goal": user_query,
+            "requirements": [],
+            "restrictions": [],
+            "evaluation_focus": "ingredients",
+        }
         intent_prompt = INTENT_ANALYZER_PROMPT.format(user_query=user_query)
+
+        if search_mode == "web":
+            # Web search engines do better with the user's natural phrasing than with the
+            # optimizer's keyword expansion (that expansion is tuned for vector/DB matching
+            # and scatters web results). Skip the optimizer here — only the intent analysis
+            # is needed downstream, to judge the web results.
+            intent_response = await self._llm_complete(ctx, "intent_analyzer", intent_prompt)
+            intent = self._parse_json_object(intent_response.text) or default_intent
+            await ctx.store.set("intent_analysis", intent)
+            print(f"DEBUG: Web search query (raw user request): '{user_query}'")
+            return WebSearchEvent(query=user_query)
+
+        # DB mode: intent analysis only needs the raw user query, so run it concurrently
+        # with the query optimizer instead of after retrieval. This hides a full LLM
+        # round-trip under the optimize+retrieve latency (eval_relevance reuses it from ctx).
+        optimizer_prompt = QUERY_OPTIMIZER_PROMPT.format(user_query=user_query)
         optimizer_response, intent_response = await asyncio.gather(
             self._llm_complete(ctx, "query_optimizer", optimizer_prompt),
             self._llm_complete(ctx, "intent_analyzer", intent_prompt),
         )
         optimized_query = optimizer_response.text.strip()
 
-        intent = self._parse_json_object(intent_response.text)
-        if not intent:
-            intent = {
-                "primary_goal": user_query,
-                "requirements": [],
-                "restrictions": [],
-                "evaluation_focus": "ingredients",
-            }
+        intent = self._parse_json_object(intent_response.text) or default_intent
         await ctx.store.set("intent_analysis", intent)
 
-        print(f"DEBUG: Optimized Query: '{optimized_query}' (Mode: {search_mode})")
-
-        if search_mode == "web":
-            return WebSearchEvent(query=optimized_query)
+        print(f"DEBUG: Optimized Query: '{optimized_query}' (Mode: db)")
         return OptimizeQueryEvent(optimized_query=optimized_query)
 
     @step
@@ -535,6 +550,7 @@ class CorrectiveRAGWorkflow(Workflow):
 
         judge_candidates = candidates[:JUDGE_TOP_K]
         print(f"DEBUG: Judging top {len(judge_candidates)} of {len(candidates)} candidates.")
+        print("DEBUG: Candidate titles: " + " | ".join(c["title"] for c in judge_candidates))
 
         # Intent was already computed concurrently in optimize_query; reuse it.
         intent = await ctx.store.get("intent_analysis", None)
@@ -545,6 +561,9 @@ class CorrectiveRAGWorkflow(Workflow):
                 "restrictions": [],
                 "evaluation_focus": "ingredients",
             }
+        print(f"DEBUG: Intent primary_goal: {intent.get('primary_goal')!r}")
+        print(f"DEBUG: Intent requirements: {json.dumps(intent.get('requirements', []))}")
+        print(f"DEBUG: Intent restrictions: {json.dumps(intent.get('restrictions', []))}")
 
         candidates_str = ""
         for i, recipe in enumerate(judge_candidates, 1):
@@ -571,10 +590,14 @@ class CorrectiveRAGWorkflow(Workflow):
         )
 
         response = await self._llm_complete(ctx, "judge_candidates", prompt)
-        selections = self._parse_json_list(response.text.strip())
+        raw_judge = response.text.strip()
+        selections = self._parse_json_list(raw_judge)
+        print(f"DEBUG: Judge returned {len(selections)} selection(s): "
+              + " | ".join(str(s.get("title", "")) for s in selections))
 
         # Assemble full content for selected recipes
         final_recipes: List[Dict[str, Any]] = []
+        unmatched: List[str] = []
         for selection in selections:
             selected_title = str(selection.get("title", "")).strip()
             if not selected_title:
@@ -585,9 +608,21 @@ class CorrectiveRAGWorkflow(Workflow):
                     "recipe_text": node_map[selected_title],
                     "match_reason": selection.get("reason", "")
                 })
+            else:
+                unmatched.append(selected_title)
+
+        if unmatched:
+            # Judge picked titles that don't exactly match the candidate titles we sent —
+            # these are silently dropped. Distinguishes a title-mismatch from a true empty result.
+            print(f"DEBUG: {len(unmatched)} judge title(s) did not match any candidate "
+                  f"and were dropped: {' | '.join(unmatched)}")
 
         if not final_recipes:
-            print("DEBUG: Judge selected no recipes.")
+            if not selections:
+                print(f"DEBUG: Judge selected no recipes (returned empty/unparseable). "
+                      f"Raw head: {raw_judge[:200]!r}")
+            else:
+                print("DEBUG: Judge selected recipes but none matched candidate titles (title mismatch).")
             return QueryEvent(context_str="[]")
 
         print("DEBUG: Judge selected recipes.")

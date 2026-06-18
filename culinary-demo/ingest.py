@@ -11,7 +11,6 @@ warnings.filterwarnings("ignore", category=FutureWarning, module=r"google\..*")
 from dotenv.main import load_dotenv
 from llama_index.core import Document, StorageContext, VectorStoreIndex
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.ingestion import IngestionPipeline
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.vector_stores.pinecone import PineconeVectorStore
 from pinecone import Pinecone, ServerlessSpec
@@ -162,12 +161,6 @@ def main():
     if not documents:
         raise RuntimeError("No documents found to ingest.")
 
-    # LIMIT FOR DEMO SPEED: Only ingest first 2000 recipes
-    # This allows for a fast (~10 min) run to verify everything works.
-    # To ingest all, comment out this line.
-    # print("limiting to 2000 recipes for speed...")
-    # documents = documents[:2000]
-
     client = Pinecone(api_key=pinecone_api_key)
     _ensure_index(client, dimension)
 
@@ -199,13 +192,10 @@ def main():
 
     text_splitter = SentenceSplitter(chunk_size=1024, chunk_overlap=50)
 
-    # Optimization: Parallel processing with IngestionPipeline could help, 
-    # but for now we increase batch size in the index creation.
+    # Embedding runs on GPU (embed_batch_size=256); insert_batch_size controls the
+    # Pinecone upsert chunk size. Larger batches speed up the upload.
     print(f"Uploading {len(documents)} documents to Pinecone (Batch Size: 256)...")
-    
-    # We use the IngestionPipeline explicitly to control workers if needed, 
-    # but run_transformations within from_documents is usually single-threaded.
-    # Increasing batch_size here helps with Pinecone upload speed.
+
     VectorStoreIndex.from_documents(
         documents=documents,
         storage_context=storage_context,

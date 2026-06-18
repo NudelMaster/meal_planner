@@ -12,7 +12,7 @@ The system implements a multi-stage pipeline: query optimization, intent analysi
 - Data ingestion pipeline for embedding and indexing recipes
 - Streamlit-based interactive chat interface
 
-**Tech Stack:** Pinecone, Cerebras Llama , Google Embeddings, Tavily, Streamlit
+**Tech Stack:** Pinecone, Cerebras, local EmbeddingGemma, Tavily, Streamlit
 
 [View detailed documentation →](./culinary-demo/README.md)
 
@@ -25,7 +25,6 @@ meal_planner/
 │   ├── app.py              # Streamlit UI
 │   ├── ingest.py           # Vector DB ingestion
 │   └── README.md           # Full documentation
-├── notebooks/              # Exploratory analysis and prototyping
 └── README.md               # This file
 ```
 
